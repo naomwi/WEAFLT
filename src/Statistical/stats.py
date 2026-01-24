@@ -2,8 +2,8 @@ import time
 import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
-from src.XAI.TimeSHAP import temporal_attribution_enhanced
-from src.Parameters.parameter import RUNTIME_LOG,STABILITY_LOG
+from src.Model.TimeSHAP import temporal_attribution_enhanced
+from src.Utils.parameter import RUNTIME_LOG,STABILITY_LOG
 from src.seed import seed_everything
 
 def run_stability_analysis(model, dataset, test_loader, device, model_name="Model"):

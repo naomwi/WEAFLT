@@ -1,240 +1,164 @@
+import os
+import time 
+import torch
+import torch.nn as nn
+import torch.optim as optim
 import numpy as np
 import pandas as pd
-import torch 
-import time
-import torch.nn as nn
-from src.Parameters.parameter import CONFIG,RUNTIME_LOG,STABILITY_LOG
-from src.Data.data_loading import create_dataloaders
-from src.LinearModel import DLinear,CALinear,NLinear
-from src.CEEMD.ceemd_filter import EventWeightedMSE
-from src.evaluate.evaluate import evaluate_model
-from src.Training.Model_training import train_model_simple,train_model
-from src.Computing.compute import compute_event_threshold_from_train,compute_rolling_features_post_split,detect_events_from_threshold
+import random
 
-def run_experiment(df,device ,target_name, source_name, model_type="NLinear"):
+from src.Data.data_loading import create_dataloaders_advanced
+from src.Model.Linear import LTSF_Linear,DLinear,NLinear
+from src.Utils.parameter import CONFIG,device
+from src.Utils.path import OUTPUT_DIR
+from src.Utils.support_class import EventWeightedMSE
+from src.Utils.training import evaluate_model,train_model
+from src.seed import seed_everything
+
+def get_model(model_name, input_dim, output_dim, seq_len, pred_len, device):
+    """Factory để tạo model nhanh"""
+    if model_name == "NLinear": 
+        model = NLinear(input_dim, output_dim, seq_len, pred_len)
+    elif model_name == "DLinear": 
+        model = DLinear(input_dim, output_dim, seq_len, pred_len)
+    else: 
+        model = LTSF_Linear(input_dim, output_dim, seq_len, pred_len)
+    return model.to(device)
+
+
+def run_single_trial(loaders, split_info, model_name, override_config=None):
     """
-    🔧 FIXED: Correct inference time calculation (per-sample, not per-batch)
-
-    Run experiment with RUNTIME tracking for Training, Inference, and XAI.
+    Hàm chạy 1 lượt Train-Eval trọn vẹn.
+    Nhận loaders đã load sẵn để tiết kiệm thời gian.
     """
-    print(f"\n🚀 Training {model_type} on {source_name} ({target_name})...")
-
-    seq_len, pred_len = CONFIG['seq_len'], CONFIG['pred_len']
-    use_features = (model_type == "CALinear")
-
-    # Create temporary dataset for split info only
-    loaders_tmp, dataset_tmp, split_info = create_dataloaders(
-        df, seq_len, pred_len, CONFIG['batch_size'], use_features=False
-    )
-
-    train_size = split_info['train_size']
-    train_end_idx = train_size + seq_len
-    df_train = df.iloc[:train_end_idx].copy()
-
-    event_threshold = compute_event_threshold_from_train(
-        df_train, CONFIG['event_threshold_pct']
-    )
-
-    df = detect_events_from_threshold(df, event_threshold)
-
-    if use_features:
-        df = compute_rolling_features_post_split(df, train_size + seq_len)
-
-    loaders, dataset, split_info = create_dataloaders(
-        df, seq_len, pred_len, CONFIG['batch_size'], use_features=use_features
-    )
+    cfg = CONFIG.copy()
+    if override_config: cfg.update(override_config)
+    
     train_loader, val_loader, test_loader = loaders
-
-    if model_type == "NLinear":
-        model = NLinear(seq_len, pred_len).to(device)
-    elif model_type == "DLinear":
-        model = DLinear(seq_len, pred_len).to(device)
-    elif model_type == "CALinear":
-        model = CALinear(seq_len, pred_len, n_features=3).to(device)
-    else:
-        raise ValueError(f"Unknown model type: {model_type}")
-
-    criterion = EventWeightedMSE(alpha=CONFIG['event_weight'])
-    optimizer = torch.optim.Adam(model.parameters(), lr=CONFIG['learning_rate'])
-
+    in_dim, out_dim = split_info['n_features'], split_info['n_targets']
+    
+    model = get_model(model_name, in_dim, out_dim, cfg['seq_len'], cfg['pred_len'], device)
+    
+    criterion = EventWeightedMSE(alpha=cfg['event_weight']).to(device)
+    optimizer = optim.Adam(model.parameters(), lr=cfg['learning_rate'])
+    
+    # Lưu tên model kèm config để tránh ghi đè file trọng số
+    unique_name = f"{model_name}_len{cfg['pred_len']}_alpha{cfg['event_weight']}"
     model = train_model(model, train_loader, val_loader, criterion, optimizer, 
-                       CONFIG['epochs'], device, model_name=model_type)
-
-    # ⏱️ FIXED: MEASURE INFERENCE TIME PER SAMPLE CORRECTLY
-    inference_times_per_sample = []
+                        cfg['epochs'], device, model_name=unique_name)
+    
+    # Measure Inference Time (GPU Synchronized)
     model.eval()
+    times = []
     with torch.no_grad():
-        for bx, by, _ in test_loader:
-            batch_size = bx.size(0)
-            start = time.time()
-            _ = model(bx.to(device))
-            elapsed = time.time() - start
-            # Divide by batch size to get per-sample time
-            inference_times_per_sample.append(elapsed / batch_size)
+        for x, _, _, _ in test_loader:
+            x = x.to(device)
+            if device.type == 'cuda': torch.cuda.synchronize()
+            st = time.time()
+            _ = model(x)
+            if device.type == 'cuda': torch.cuda.synchronize()
+            times.append((time.time()-st)/x.size(0))
+    
+    metrics = evaluate_model(model, test_loader, device, split_info)
+    metrics['Inference_ms'] = np.mean(times) * 1000
+    
+    return metrics
 
-    # Average inference time per sample in milliseconds
-    avg_infer_ms = np.mean(inference_times_per_sample) * 1000
-
-    RUNTIME_LOG.append({
-        "Stage": "Inference",
-        "Model": model_type,
-        "Time_s": avg_infer_ms,
-        "Unit": "ms/sample"
-    })
-
-    metrics = evaluate_model(model, test_loader, dataset, device)
-    metrics.update({
-        "Target": target_name,
-        "Source": source_name,
-        "Model": model_type
-    })
-
-    return metrics, model, dataset, test_loader, df
-
-def run_multi_horizon_experiments(df, target_name, source_name, model_type="NLinear",
-                                   horizons=[6, 12, 24, 48, 72]):
-    """Multi-horizon with runtime tracking"""
-    print(f"\n🔬 Multi-horizon: {model_type}...")
-
-    results_by_horizon = []
-    original_pred_len = CONFIG['pred_len']
-
-    # ⏱️ START MULTI-HORIZON TIMER
-    mh_start = time.time()
-
-    for pred_len in horizons:
-        print(f"   Horizon: {pred_len}h")
-
-        try:
-            CONFIG['pred_len'] = pred_len
-            metrics, model, dataset, test_loader, df_updated = run_experiment(
-                df, target_name, source_name, model_type
-            )
-            metrics['Horizon'] = pred_len
-            results_by_horizon.append(metrics)
-        except Exception as e:
-            print(f"   ⚠️ Failed: {str(e)[:50]}")
-        finally:
-            CONFIG['pred_len'] = original_pred_len
-
-    # ⏱️ LOG MULTI-HORIZON TIME
-    mh_time = time.time() - mh_start
-    RUNTIME_LOG.append({
-        "Stage": "Multi-Horizon",
-        "Model": model_type,
-        "Time_s": mh_time,
-        "Unit": "s/total"
-    })
-
-    return pd.DataFrame(results_by_horizon)
-
-def run_ablation_study(df, device, target_name, source_name):
-    """Ablation study"""
-    print(f"\n🔬 Ablation study...")
-
+# 1. MODEL COMPARISON (So sánh Model)
+def exp_model_comparison(df):
+    print("\n🧪 EXP 1: Model Comparison & Runtime...")
+    
+    loaders, _, info = create_dataloaders_advanced(df, CONFIG['targets'], CONFIG['seq_len'], CONFIG['pred_len'], CONFIG['batch_size'])
+    
     results = []
-    seq_len, pred_len = CONFIG['seq_len'], CONFIG['pred_len']
+    for m in ["DLinear", "NLinear", "LTSF_Linear"]:
+        print(f"   Running {m}...")
+        metrics = run_single_trial(loaders, info, m)
+        metrics['Model'] = m
+        results.append(metrics)
+        
+    df_res = pd.DataFrame(results)
+    df_res.to_csv(f"{OUTPUT_DIR}/comparison_results.csv", index=False)
+    
+    # Tách file Runtime riêng
+    df_res[['Model', 'Inference_ms']].to_csv(OUTPUT_DIR/"report/runtime_report.csv", index=False)
+    print("Model Comparision report SAVED!!")
 
-    loaders_tmp, dataset_tmp, split_info = create_dataloaders(
-        df, seq_len, pred_len, CONFIG['batch_size'], False
-    )
-    train_size = split_info['train_size']
-    train_end_idx = train_size + seq_len
-    df_train = df.iloc[:train_end_idx].copy()
-
-    event_threshold = compute_event_threshold_from_train(
-        df_train, CONFIG['event_threshold_pct']
-    )
-    df = detect_events_from_threshold(df, event_threshold)
-
-    # 1. Baseline
-    print("   [1/4] Baseline")
-    loaders, dataset, _ = create_dataloaders(df, seq_len, pred_len, CONFIG['batch_size'], False)
-    train_loader, val_loader, test_loader = loaders
-
-    model = NLinear(seq_len, pred_len).to(device)
-    criterion = nn.MSELoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=CONFIG['learning_rate'])
-    model = train_model_simple(model, train_loader, val_loader, criterion, optimizer, CONFIG['epochs'], device, "Ablation-Baseline")
-    metrics = evaluate_model(model, test_loader, dataset, device)
-    metrics.update({"Variant": "Baseline", "Change_Features": "No", "Event_Loss": "No"})
-    results.append(metrics)
-
-    # 2. + Features
-    print("   [2/4] + Features")
-    df_with_features = compute_rolling_features_post_split(df, train_size + seq_len)
-    loaders, dataset, _ = create_dataloaders(df_with_features, seq_len, pred_len, CONFIG['batch_size'], True)
-    train_loader, val_loader, test_loader = loaders
-
-    model = CALinear(seq_len, pred_len).to(device)
-    criterion = nn.MSELoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=CONFIG['learning_rate'])
-    model = train_model_simple(model, train_loader, val_loader, criterion, optimizer, CONFIG['epochs'], device, "Ablation-+Features")
-    metrics = evaluate_model(model, test_loader, dataset, device)
-    metrics.update({"Variant": "+ Features", "Change_Features": "Yes", "Event_Loss": "No"})
-    results.append(metrics)
-
-    # 3. + Event loss
-    print("   [3/4] + Event loss")
-    loaders, dataset, _ = create_dataloaders(df, seq_len, pred_len, CONFIG['batch_size'], False)
-    train_loader, val_loader, test_loader = loaders
-
-    model = NLinear(seq_len, pred_len).to(device)
-    criterion = EventWeightedMSE(alpha=CONFIG['event_weight'])
-    optimizer = torch.optim.Adam(model.parameters(), lr=CONFIG['learning_rate'])
-    model = train_model(model, train_loader, val_loader, criterion, optimizer, CONFIG['epochs'], device, "Ablation-+EventLoss")
-    metrics = evaluate_model(model, test_loader, dataset, device)
-    metrics.update({"Variant": "+ Event loss", "Change_Features": "No", "Event_Loss": "Yes"})
-    results.append(metrics)
-
-    # 4. Full
-    print("   [4/4] Full")
-    loaders, dataset, _ = create_dataloaders(df_with_features, seq_len, pred_len, CONFIG['batch_size'], True)
-    train_loader, val_loader, test_loader = loaders
-
-    model = CALinear(seq_len, pred_len).to(device)
-    criterion = EventWeightedMSE(alpha=CONFIG['event_weight'])
-    optimizer = torch.optim.Adam(model.parameters(), lr=CONFIG['learning_rate'])
-    model = train_model(model, train_loader, val_loader, criterion, optimizer, CONFIG['epochs'], device, "Ablation-Full")
-    metrics = evaluate_model(model, test_loader, dataset, device)
-    metrics.update({"Variant": "Full", "Change_Features": "Yes", "Event_Loss": "Yes"})
-    results.append(metrics)
-
-    return pd.DataFrame(results)
-
-def run_alpha_sensitivity_analysis(df, device, target_name, source_name, 
-                                    alphas=[0.5, 1.0, 2.0, 3.0, 5.0, 10.0]):
-    """Alpha sensitivity"""
-    print(f"\n🔬 Alpha sensitivity...")
-
+# 2. EXP: ALPHA SENSITIVITY (Độ nhạy Loss)
+def exp_alpha_sensitivity(df):
+    print("\n🧪 EXP 2: Alpha Sensitivity...")
+    
+    loaders, _, info = create_dataloaders_advanced(df, CONFIG['targets'], CONFIG['seq_len'], CONFIG['pred_len'], CONFIG['batch_size'])
+    
     results = []
-    seq_len, pred_len = CONFIG['seq_len'], CONFIG['pred_len']
-
-    loaders_tmp, dataset_tmp, split_info = create_dataloaders(
-        df, seq_len, pred_len, CONFIG['batch_size'], False
-    )
-    train_size = split_info['train_size']
-    train_end_idx = train_size + seq_len
-    df_train = df.iloc[:train_end_idx].copy()
-
-    event_threshold = compute_event_threshold_from_train(
-        df_train, CONFIG['event_threshold_pct']
-    )
-    df = detect_events_from_threshold(df, event_threshold)
-    df = compute_rolling_features_post_split(df, train_size + seq_len)
-
+    alphas = [1.0, 3.0, 5.0, 10.0]
+    
     for alpha in alphas:
-        print(f"   Alpha={alpha}")
-
-        loaders, dataset, _ = create_dataloaders(df, seq_len, pred_len, CONFIG['batch_size'], True)
-        train_loader, val_loader, test_loader = loaders
-
-        model = CALinear(seq_len, pred_len).to(device)
-        criterion = EventWeightedMSE(alpha=alpha)
-        optimizer = torch.optim.Adam(model.parameters(), lr=CONFIG['learning_rate'])
-        model = train_model(model, train_loader, val_loader, criterion, optimizer, CONFIG['epochs'], device, f"Alpha-{alpha}")
-        metrics = evaluate_model(model, test_loader, dataset, device)
+        print(f"   Alpha = {alpha}...")
+        metrics = run_single_trial(loaders, info, "DLinear", override_config={'event_weight': alpha})
         metrics['Alpha'] = alpha
         results.append(metrics)
+        
+    pd.DataFrame(results).to_csv(OUTPUT_DIR/"report/runtime_report.csv", index=False)
+    print("Alpha sensitivity comparision SAVED!!")
 
-    return pd.DataFrame(results)
+# 3. EXP: HORIZON COMPARISON (Dự báo xa)
+def exp_horizon_comparison(df):
+    print("\n🧪 EXP 3: Forecasting Horizon...")
+    
+    results = []
+    horizons = [24, 48, 96, 192]
+    
+    for h in horizons:
+        print(f"   Horizon = {h}...")
+        loaders, _, info = create_dataloaders_advanced(
+            df, CONFIG['targets'], CONFIG['seq_len'], 
+            pred_len=h,
+            batch_size=CONFIG['batch_size']
+        )
+        
+        metrics = run_single_trial(loaders, info, "DLinear", override_config={'pred_len': h})
+        metrics['Horizon'] = h
+        results.append(metrics)
+        
+    pd.DataFrame(results).to_csv(OUTPUT_DIR/"report/runtime_report.csv", index=False)
+    print("Horizon comparision comparision SAVED!!")
+
+# 4. EXP: STABILITY (Kiểm tra độ ổn định)  
+def exp_stability(df):
+    
+    loaders, _, info = create_dataloaders_advanced(df, CONFIG['targets'], CONFIG['seq_len'], CONFIG['pred_len'], CONFIG['batch_size'])
+    
+    results = []
+    seeds = [42, 100, 2024, 777, 99]
+    
+    for s in seeds:
+        print(f"   Seed = {s}...")
+        seed_everything(s) # Đặt seed trước khi init model
+        metrics = run_single_trial(loaders, info, "DLinear")
+        metrics['Seed'] = s
+        results.append(metrics)
+        
+    pd.DataFrame(results).to_csv(OUTPUT_DIR/"report/runtime_report.csv", index=False)
+    print("Stability comparision SAVED!!")
+
+# 5. EXP: ABLATION STUDY (Nghiên cứu cắt bỏ)
+def exp_ablation_study(df):
+    print("\n🧪 EXP 5: Ablation Study...")
+    
+    loaders, _, info = create_dataloaders_advanced(df, CONFIG['targets'], CONFIG['seq_len'], CONFIG['pred_len'], CONFIG['batch_size'])
+    
+    results = []
+    
+    print("   Running Proposed Method...")
+    m1 = run_single_trial(loaders, info, "DLinear", override_config={'event_weight': 5.0})
+    m1['Method'] = "Proposed (Weighted Loss)"
+    results.append(m1)
+    
+    print("   Running Baseline Method...")
+    m2 = run_single_trial(loaders, info, "DLinear", override_config={'event_weight': 1.0})
+    m2['Method'] = "Baseline (Standard MSE)"
+    results.append(m2)
+    
+    pd.DataFrame(results).to_csv(OUTPUT_DIR/"report/runtime_report.csv", index=False)
+    print("Ablation study SAVED!!")
