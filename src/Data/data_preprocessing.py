@@ -5,7 +5,7 @@ import numpy as np
 
 def preprocess_dataframe(df, features,log_cols = ['Flow', 'Turbidity', 'EC'],sampling_rate='H'):
     data = df.copy()
-    
+    windows = {}
     if sampling_rate == 'H':
         windows = {
             '24h':24,
@@ -29,7 +29,5 @@ def preprocess_dataframe(df, features,log_cols = ['Flow', 'Turbidity', 'EC'],sam
             data[f"{col}_mean_{w}"] = target_series.rolling(window = size).mean().bfill()
             data[f"{col}_std_{w}"] = target_series.rolling(window = size).std().bfill()
 
-        threshold_val = target_series.quantile(0.95)
-        data[f"{col}_is_extreme"] = (target_series > threshold_val).astype(float)
-    
+        data = data.dropna()
     return data

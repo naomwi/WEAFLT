@@ -208,3 +208,6 @@ __marimo__/
 
 __init__.py
 .vscode/
+datasets/
+output/model/
+checkpoints/

@@ -81,7 +81,7 @@ def exp_model_comparison(df):
     df_res.to_csv(f"{OUTPUT_DIR}/comparison_results.csv", index=False)
     
     # Tách file Runtime riêng
-    df_res[['Model', 'Inference_ms']].to_csv(OUTPUT_DIR/"report/runtime_report.csv", index=False)
+    df_res[['Model', 'Inference_ms']].to_csv(OUTPUT_DIR/"report/model_comparision_report.csv", index=False)
     print("Model Comparision report SAVED!!")
 
 # 2. EXP: ALPHA SENSITIVITY (Độ nhạy Loss)
@@ -99,7 +99,7 @@ def exp_alpha_sensitivity(df):
         metrics['Alpha'] = alpha
         results.append(metrics)
         
-    pd.DataFrame(results).to_csv(OUTPUT_DIR/"report/runtime_report.csv", index=False)
+    pd.DataFrame(results).to_csv(OUTPUT_DIR/"report/alpha_sensitivity.csv", index=False)
     print("Alpha sensitivity comparision SAVED!!")
 
 # 3. EXP: HORIZON COMPARISON (Dự báo xa)
@@ -121,7 +121,7 @@ def exp_horizon_comparison(df):
         metrics['Horizon'] = h
         results.append(metrics)
         
-    pd.DataFrame(results).to_csv(OUTPUT_DIR/"report/runtime_report.csv", index=False)
+    pd.DataFrame(results).to_csv(OUTPUT_DIR/"report/horizon_comparison.csv", index=False)
     print("Horizon comparision comparision SAVED!!")
 
 # 4. EXP: STABILITY (Kiểm tra độ ổn định)  
@@ -139,7 +139,7 @@ def exp_stability(df):
         metrics['Seed'] = s
         results.append(metrics)
         
-    pd.DataFrame(results).to_csv(OUTPUT_DIR/"report/runtime_report.csv", index=False)
+    pd.DataFrame(results).to_csv(OUTPUT_DIR/"report/stability_report.csv", index=False)
     print("Stability comparision SAVED!!")
 
 # 5. EXP: ABLATION STUDY (Nghiên cứu cắt bỏ)
@@ -160,5 +160,5 @@ def exp_ablation_study(df):
     m2['Method'] = "Baseline (Standard MSE)"
     results.append(m2)
     
-    pd.DataFrame(results).to_csv(OUTPUT_DIR/"report/runtime_report.csv", index=False)
+    pd.DataFrame(results).to_csv(OUTPUT_DIR/"report/ablation_study.csv", index=False)
     print("Ablation study SAVED!!")
