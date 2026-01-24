@@ -28,7 +28,7 @@ def data_processing():
 
     try:
         cols_to_decomposed =  ['Flow_log', 'Turbidity_log', 'EC_log'] 
-        df_decomposed, info = apply_ceemd_decomposition(pd.read_csv(DATA_DIR/'New_data/Training_data/input.csv'), cols_to_decomposed, n_imfs=4, trials=10)
+        df_decomposed, info = apply_ceemd_decomposition(df, cols_to_decomposed, n_imfs=4, trials=10)
         print("Stats IMF:", info)
         print("New Columns", [c for c in df_decomposed.columns if "IMF" in c])
         df_decomposed.to_csv(DATA_DIR/"New_data/Training_data/Final_Dataset_Multivariate_CEEMDAN.csv", index=False)
