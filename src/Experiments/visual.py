@@ -7,7 +7,7 @@ from src.Utils.path import OUTPUT_DIR
 # Cấu hình giao diện biểu đồ
 sns.set_theme(style="whitegrid")
 plt.rcParams.update({'figure.figsize': (10, 6), 'figure.dpi': 150})
-REPORT_DIR = OUTPUT_DIR/"reports"
+REPORT_DIR = OUTPUT_DIR/"report"
 FIGURE_DIR = OUTPUT_DIR/"image"
 os.makedirs(FIGURE_DIR, exist_ok=True)
 
@@ -17,42 +17,35 @@ def save_plot(filename):
     plt.savefig(path, dpi=300)
     plt.close()
     print(f"Saved plot: {path}")
+    plt.close()
 
-# ==========================================
-# 1. BIỂU ĐỒ SO SÁNH MODEL (MAE & MSE)
-# ==========================================
 def plot_model_comparison():
-    csv_path = f"{REPORT_DIR}/comparison_results.csv"
+    csv_path = OUTPUT_DIR/"comparison_results.csv"
     if not os.path.exists(csv_path): return
     
     df = pd.read_csv(csv_path)
     
-    # Chuyển đổi dữ liệu để vẽ Grouped Bar Chart
-    df_melt = df.melt(id_vars="Model", value_vars=["MAE", "MSE"], var_name="Metric", value_name="Error")
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
     
-    plt.figure(figsize=(8, 6))
-    ax = sns.barplot(data=df_melt, x="Model", y="Error", hue="Metric", palette="viridis")
+    sns.barplot(data=df, x="Model", y="MAE", ax=ax1, palette="viridis")
+    ax1.set_title("Comparison by MAE", fontsize=12, fontweight='bold')
     
-    plt.title("Model Performance Comparison", fontsize=14, fontweight='bold')
-    plt.ylabel("Error Value (Lower is Better)")
+    sns.barplot(data=df, x="Model", y="RMSE", ax=ax2, palette="magma")
+    ax2.set_title("Comparison by RMSE", fontsize=12, fontweight='bold')
     
-    # Thêm số liệu lên đầu cột
-    for container in ax.containers:
-        ax.bar_label(container, fmt='%.4f', padding=3)
-        
+    for ax in [ax1, ax2]:
+        for container in ax.containers:
+            ax.bar_label(container, fmt='%.4f', padding=3)
     save_plot("model_comparison.png")
 
-# ==========================================
-# 2. BIỂU ĐỒ THỜI GIAN THỰC THI (Runtime)
-# ==========================================
 def plot_runtime():
-    csv_path = f"{REPORT_DIR}/runtime_report.csv"
+    csv_path = REPORT_DIR/"runtime_report.csv"
     if not os.path.exists(csv_path): return
 
     df = pd.read_csv(csv_path)
     
     plt.figure(figsize=(8, 5))
-    ax = sns.barplot(data=df, x="Model", y="Inference_ms", palette="magma")
+    ax = sns.barplot(data=df, x="Model", y="Time_s", palette="magma")
     
     plt.title("Inference Speed (Latency)", fontsize=14, fontweight='bold')
     plt.ylabel("Time per Sample (ms)")
@@ -63,18 +56,15 @@ def plot_runtime():
         
     save_plot("runtime_comparison.png")
 
-# ==========================================
-# 3. BIỂU ĐỒ HORIZON (Dự báo xa)
-# ==========================================
 def plot_horizon():
-    csv_path = f"{REPORT_DIR}/horizon_comparison.csv"
+    csv_path = REPORT_DIR/"horizon_comparison.csv"
     if not os.path.exists(csv_path): return
 
     df = pd.read_csv(csv_path)
     
     plt.figure()
     sns.lineplot(data=df, x="Horizon", y="MAE", marker="o", linewidth=2.5, label="MAE", color="blue")
-    sns.lineplot(data=df, x="Horizon", y="MSE", marker="s", linewidth=2.5, label="MSE", color="red")
+    sns.lineplot(data=df, x="Horizon", y="RMSE", marker="s", linewidth=2.5, label="RMSE", color="red")
     
     plt.title("Forecasting Performance vs Horizon", fontsize=14, fontweight='bold')
     plt.xlabel("Prediction Horizon (Hours)")
@@ -85,11 +75,8 @@ def plot_horizon():
     
     save_plot("horizon_analysis.png")
 
-# ==========================================
-# 4. BIỂU ĐỒ ALPHA SENSITIVITY
-# ==========================================
 def plot_alpha():
-    csv_path = f"{REPORT_DIR}/alpha_sensitivity.csv"
+    csv_path = REPORT_DIR/"alpha_sensitivity.csv"
     if not os.path.exists(csv_path): return
 
     df = pd.read_csv(csv_path)
@@ -111,11 +98,8 @@ def plot_alpha():
     
     save_plot("alpha_sensitivity.png")
 
-# ==========================================
-# 5. BIỂU ĐỒ ABLATION STUDY
-# ==========================================
 def plot_ablation():
-    csv_path = f"{REPORT_DIR}/ablation_study.csv"
+    csv_path = REPORT_DIR/"ablation_study.csv"
     if not os.path.exists(csv_path): return
 
     df = pd.read_csv(csv_path)
@@ -132,11 +116,8 @@ def plot_ablation():
         
     save_plot("ablation_study.png")
 
-# ==========================================
-# 6. BIỂU ĐỒ STABILITY (Boxplot)
-# ==========================================
 def plot_stability():
-    csv_path = f"{REPORT_DIR}/stability_report.csv"
+    csv_path = REPORT_DIR/"stability_report.csv"
     if not os.path.exists(csv_path): return
 
     df = pd.read_csv(csv_path)
@@ -154,9 +135,6 @@ def plot_stability():
     
     save_plot("stability_analysis.png")
 
-# ==========================================
-# MAIN RUNNER
-# ==========================================
 def plot_all():
     print("\nGENERATING PLOTS...")
     plot_model_comparison()

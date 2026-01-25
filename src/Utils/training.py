@@ -10,7 +10,7 @@ from src.Utils.path import OUTPUT_DIR
 # --- config ---
 
 def train_model(model, train_loader, val_loader, criterion, optimizer, 
-                epochs, device, model_name="Model"):
+                epochs, device, model_name="Model",force_train = False):
 
     
     
@@ -19,13 +19,12 @@ def train_model(model, train_loader, val_loader, criterion, optimizer,
 
     print(f" Checking model: {safe_model_name}...")
 
-    if os.path.exists(save_path):
+    if os.path.exists(save_path) and not force_train:
         print(f"Found existing model at '{save_path}'")
         print(f"Skipping training & Loading weights...")
         
-        # Load trọng số đã lưu vào model hiện tại
         model.load_state_dict(torch.load(save_path, map_location=device))
-        return model  # Trả về luôn, không chạy vòng lặp bên dưới
+        return model  
     
     print(f"Start training for {epochs} epochs...")
     
@@ -98,43 +97,58 @@ def train_model(model, train_loader, val_loader, criterion, optimizer,
         
     return model
 
-def evaluate_model(model, loader, device,split_info):
-    """Evaluate model"""
+def evaluate_model(model, loader, device, split_info):
+    """
+    Evaluate model với Inverse Log Transform
+    is_log_target: True nếu biến mục tiêu đã bị log1p trước đó
+    """
     model.eval()
     preds, actuals, events = [], [], []
-    y_mean = split_info['scaler']['y_mean'].to(device)
-    y_std = split_info['scaler']['y_std'].to(device)
+    
+    y_mean = split_info['scaler']['y_mean'].to(device).view(1, 1, -1)
+    y_std = split_info['scaler']['y_std'].to(device).view(1, 1, -1)
 
+    target_names = split_info.get('target_names',[])
     with torch.no_grad():
         for bx, by, bevent, _ in loader:
             bx, by, bevent = bx.to(device), by.to(device), bevent.to(device)
-            out = model(bx) # Shape: [Batch, 24, 6]
             
+            out = model(bx) # Shape: [Batch, 24, 6]
+
             out_real = out * y_std + y_mean
             by_real = by * y_std + y_mean
-            
-            out_main = out_real[:, :, 0]
-            by_main = by_real[:, :, 0]
 
+            preds.append(out_real.cpu().numpy())
+            actuals.append(by_real.cpu().numpy())
             if bevent.dim() == 3:
-                event_main = bevent[:, :, 0]
+                events.append(bevent.cpu().numpy())
             else:
-                event_main = bevent
-                        
-            preds.append(out_main.cpu().numpy())
-            actuals.append(by_main.cpu().numpy())
-            events.append(event_main.cpu().numpy())
-    if len(preds) == 0: 
-        return {}
-    preds = np.concatenate(preds).flatten()
-    actuals = np.concatenate(actuals).flatten()
-    events = np.concatenate(events).flatten()
+                events.append(bevent.unsqueeze(-1).cpu().numpy())
+                    
+            
+    if len(preds) == 0: return {}
+    preds_total = np.concatenate(preds, axis=0)
+    actuals_total = np.concatenate(actuals, axis=0)
+    events_total = np.concatenate(events, axis=0)
+
+    for i, col_name in enumerate(target_names):
+        if "_log" in col_name:
+            preds_total[:, :, i] = np.expm1(preds_total[:, :, i])
+            actuals_total[:, :, i] = np.expm1(actuals_total[:, :, i])
+            preds_total[:, :, i] = np.maximum(preds_total[:, :, i], 0)
+
+    preds = np.concatenate(preds_total).flatten()
+    actuals = np.concatenate(actuals_total).flatten()
+    events = np.concatenate(events_total).flatten()
 
     rmse = np.sqrt(mean_squared_error(actuals, preds))
     mae = mean_absolute_error(actuals, preds)
     r2 = r2_score(actuals, preds)
     
-    mape = np.mean(np.abs((actuals - preds) / (actuals + 1e-6))) * 100
+    with np.errstate(divide='ignore', invalid='ignore'):
+        mape = np.abs((actuals - preds) / (actuals + 1e-6))
+        mape = np.nan_to_num(mape, nan=0.0, posinf=0.0, neginf=0.0)
+        mape = np.mean(mape) * 100
 
     event_indices = np.where(events == 1)[0]
     
