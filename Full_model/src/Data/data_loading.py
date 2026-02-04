@@ -153,7 +153,8 @@ def create_dataloaders_advanced(df, target_cols, seq_len, pred_len, batch_size=3
             'y_mean': torch.FloatTensor(y_mean.values),
             'y_std': torch.FloatTensor(y_std.values)
         },
-        'target_names': target_cols
+        'target_names': target_cols,
+        'feature_names': feature_cols  # Added for XAI analysis
     }
 
     return loaders, None, split_info

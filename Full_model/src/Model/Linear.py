@@ -78,5 +78,105 @@ class NLinear(nn.Module):
         last_value_projected = self.last_val_projection(last_value)
         
         pred = pred_norm_projected + last_value_projected
-        
+
         return pred
+
+
+class RLinear(nn.Module):
+    """
+    RLinear: Residual Linear model for time series forecasting.
+
+    A simple yet effective linear model that learns residual patterns.
+    Uses RevIN (Reversible Instance Normalization) for better handling
+    of distribution shift in non-stationary time series.
+
+    Reference: "Are Transformers Effective for Time Series Forecasting?"
+
+    Args:
+        input_dim: Number of input features
+        output_dim: Number of output targets
+        seq_len: Input sequence length
+        pred_len: Prediction horizon length
+        individual: If True, use separate linear for each channel
+        rev_in: If True, apply reversible instance normalization
+    """
+
+    def __init__(self, input_dim, output_dim, seq_len, pred_len, individual=False, rev_in=True):
+        super().__init__()
+        self.seq_len = seq_len
+        self.pred_len = pred_len
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.individual = individual
+        self.rev_in = rev_in
+
+        # RevIN parameters
+        if self.rev_in:
+            self.affine_weight = nn.Parameter(torch.ones(input_dim))
+            self.affine_bias = nn.Parameter(torch.zeros(input_dim))
+
+        # Linear layers
+        if self.individual:
+            # Separate linear layer per channel
+            self.linears = nn.ModuleList([
+                nn.Linear(seq_len, pred_len) for _ in range(input_dim)
+            ])
+        else:
+            # Shared linear layer across channels
+            self.linear = nn.Linear(seq_len, pred_len)
+
+        # Feature projection (input_dim -> output_dim)
+        self.feature_projection = nn.Linear(input_dim, output_dim)
+
+    def _rev_in_norm(self, x):
+        """Apply reversible instance normalization."""
+        # x: [batch, seq_len, input_dim]
+        self._mean = x.mean(dim=1, keepdim=True)  # [batch, 1, input_dim]
+        self._std = x.std(dim=1, keepdim=True) + 1e-5  # [batch, 1, input_dim]
+        x = (x - self._mean) / self._std
+        x = x * self.affine_weight + self.affine_bias
+        return x
+
+    def _rev_in_denorm(self, x):
+        """Reverse the instance normalization."""
+        # x: [batch, pred_len, input_dim]
+        x = (x - self.affine_bias) / (self.affine_weight + 1e-5)
+        x = x * self._std + self._mean
+        return x
+
+    def forward(self, x):
+        """
+        Forward pass.
+
+        Args:
+            x: Input tensor [batch, seq_len, input_dim]
+
+        Returns:
+            Output tensor [batch, pred_len, output_dim]
+        """
+        # Apply RevIN normalization
+        if self.rev_in:
+            x = self._rev_in_norm(x)
+
+        # Temporal projection
+        if self.individual:
+            # Process each channel separately
+            x = x.permute(0, 2, 1)  # [batch, input_dim, seq_len]
+            outputs = []
+            for i, linear in enumerate(self.linears):
+                outputs.append(linear(x[:, i, :]))  # [batch, pred_len]
+            x = torch.stack(outputs, dim=2)  # [batch, pred_len, input_dim]
+        else:
+            # Shared processing
+            x = x.permute(0, 2, 1)  # [batch, input_dim, seq_len]
+            x = self.linear(x)  # [batch, input_dim, pred_len]
+            x = x.permute(0, 2, 1)  # [batch, pred_len, input_dim]
+
+        # Apply RevIN denormalization
+        if self.rev_in:
+            x = self._rev_in_denorm(x)
+
+        # Feature projection
+        x = self.feature_projection(x)  # [batch, pred_len, output_dim]
+
+        return x

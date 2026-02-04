@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from PyEMD import CEEMDAN
+from PyEMD import EEMD  # Using EEMD/CEEMD (Complete Ensemble EMD) - base approach
 from tqdm.auto import tqdm
 
 class DataProcessor:
@@ -37,53 +37,62 @@ class DataProcessor:
         print(f"    Target columns: {self.target_cols}")
         return df
 
-    def apply_ceemdan(self, df):
-        print(f"Applying CEEMDAN Decomposition (n_imfs={self.cfg['n_imfs']})...")
-        
+    def apply_ceemd(self, df):
+        """
+        Apply CEEMD (Complete Ensemble EMD) decomposition to target columns.
+        This is the base approach - CEEMD-LTSF (not CEEMDAN-LTSF).
+        """
+        print(f"Applying CEEMD Decomposition (n_imfs={self.cfg['n_imfs']})...")
+
         process_list = []
         n_imfs = self.cfg['n_imfs']
-        trials = self.cfg.get('ceemd_trials', 10) 
+        trials = self.cfg.get('ceemd_trials', 10)
 
         for site_id, site_df in df.groupby(self.cfg['site_col']):
             site_df = site_df.copy()
-            
+
             for col in tqdm(self.target_cols, desc=f"Site {site_id}", leave=False):
                 signal = site_df[col].values
-                
-               
+
+                # Handle NaN values
                 if np.isnan(signal).any():
                     signal = pd.Series(signal).interpolate().bfill().ffill().values
-                
+
                 for i in range(n_imfs):
                     col_name = f'{col}_IMF_{i+1}'
                     site_df[col_name] = 0.0
                     if col_name not in self.imf_cols: self.imf_cols.append(col_name)
-                    
+
                 res_name = f'{col}_residue'
                 site_df[res_name] = 0.0
                 if res_name not in self.imf_cols: self.imf_cols.append(res_name)
 
                 try:
                     if len(signal) < 50: raise ValueError("Signal too short")
-                    
-                    ceemdan = CEEMDAN(trials=trials, noise_scale=0.2, parallel=False)
-                    ceemdan.ceemdan(signal, max_imf=n_imfs)
-                    imfs, residue = ceemdan.get_imfs_and_residue()
-                    
-                    found_imfs = min(len(imfs), n_imfs)
-                    for i in range(found_imfs):
-                        site_df[f'{col}_IMF_{i+1}'] = imfs[i]
-                    site_df[res_name] = residue
+
+                    # Use EEMD (Complete Ensemble EMD) - the base approach
+                    eemd = EEMD(trials=trials, noise_width=0.2, parallel=False)
+                    imfs = eemd.eemd(signal, max_imf=n_imfs)
+
+                    # Separate IMFs and residue (last component is residue)
+                    if len(imfs) > 1:
+                        found_imfs = min(len(imfs) - 1, n_imfs)
+                        for i in range(found_imfs):
+                            site_df[f'{col}_IMF_{i+1}'] = imfs[i]
+                        site_df[res_name] = imfs[-1]  # Last IMF as residue
+                    else:
+                        site_df[res_name] = imfs[0] if len(imfs) > 0 else signal
 
                 except Exception as e:
+                    # Fallback: simple rolling decomposition
                     temp_res = pd.Series(signal).rolling(window=24, center=True, min_periods=1).mean().bfill().ffill().values
                     temp_noise = signal - temp_res
-                    
+
                     site_df[f'{col}_IMF_1'] = temp_noise
                     site_df[res_name] = temp_res
-            
+
             process_list.append(site_df)
-            
+
         return pd.concat(process_list, ignore_index=True)
 
     def generate_stats(self, df):
@@ -132,15 +141,26 @@ class DataProcessor:
             
         return df
 
-    def run_pipeline(self, df_raw,type=1):
+    def run_pipeline(self, df_raw, type=1):
+        """
+        Run the data processing pipeline.
+
+        Args:
+            df_raw: Raw DataFrame
+            type: Pipeline type
+                1 - Full pipeline (CEEMD + Stats + Events)
+                2 - CEEMD only
+                3 - Stats only
+                4 - Events only
+        """
         df = self.load_and_clean(df_raw)
         if type == 1:
-            df = self.apply_ceemdan(df)
+            df = self.apply_ceemd(df)
             df = self.generate_stats(df)
             df = self.detect_events(df)
         elif type == 2:
-            df = self.apply_ceemdan(df)
-        elif type == 3: 
+            df = self.apply_ceemd(df)
+        elif type == 3:
             df = self.generate_stats(df)
         else:
             df = self.detect_events(df)

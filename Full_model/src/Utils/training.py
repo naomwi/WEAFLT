@@ -158,15 +158,88 @@ def evaluate_model(model, loader, device, split_info):
     else:
         sf_mae = 0.0
 
+    # Calculate event detection metrics
+    event_metrics = calculate_event_detection_metrics_internal(
+        actuals, preds, events
+    )
+
     return {
-        "RMSE": rmse, 
-        "MAE": mae, 
-        "R2": r2, 
+        "RMSE": rmse,
+        "MAE": mae,
+        "R2": r2,
         "MAPE": mape,
-        "SF_MAE": sf_mae, 
+        "SF_MAE": sf_mae,
         "N_Events": len(event_indices),
+        # Event detection metrics
+        "Precision": event_metrics.get('precision', 0),
+        "Recall": event_metrics.get('recall', 0),
+        "F1_Score": event_metrics.get('f1_score', 0),
+        "AUROC": event_metrics.get('auroc', 0.5),
         "raw_data": {
-            "preds": preds_total,    
-            "actuals": actuals_total
+            "preds": preds_total,
+            "actuals": actuals_total,
+            "events": events_total
         }
+    }
+
+
+def calculate_event_detection_metrics_internal(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    event_flags: np.ndarray
+) -> dict:
+    """
+    Calculate event detection metrics (internal helper).
+
+    Args:
+        y_true: True values (flattened)
+        y_pred: Predicted values (flattened)
+        event_flags: Binary event indicators (flattened)
+
+    Returns:
+        Dictionary with event detection metrics
+    """
+    from sklearn.metrics import precision_score, recall_score, f1_score
+
+    # Ensure arrays are 1D
+    y_true = np.array(y_true).flatten()
+    y_pred = np.array(y_pred).flatten()
+    event_flags = np.array(event_flags).flatten()
+
+    # Binary event ground truth
+    event_true = (event_flags > 0.5).astype(int)
+
+    n_events = np.sum(event_true)
+    n_total = len(event_true)
+
+    if n_events == 0 or n_events == n_total:
+        return {
+            'precision': 0.0,
+            'recall': 0.0,
+            'f1_score': 0.0,
+            'auroc': 0.5
+        }
+
+    # Use prediction error to detect events
+    pred_error = np.abs(y_true - y_pred)
+    error_threshold = np.percentile(pred_error, 80)
+    event_pred = (pred_error > error_threshold).astype(int)
+
+    # Calculate metrics
+    precision = precision_score(event_true, event_pred, zero_division=0)
+    recall = recall_score(event_true, event_pred, zero_division=0)
+    f1 = f1_score(event_true, event_pred, zero_division=0)
+
+    # AUROC
+    try:
+        from sklearn.metrics import roc_auc_score
+        auroc = roc_auc_score(event_true, pred_error)
+    except Exception:
+        auroc = 0.5
+
+    return {
+        'precision': precision,
+        'recall': recall,
+        'f1_score': f1,
+        'auroc': auroc
     }

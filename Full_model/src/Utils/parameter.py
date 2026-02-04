@@ -1,7 +1,7 @@
 import torch
 
 CONFIG = {
-    # training parameters
+    # Training parameters
     'seq_len': 96,
     'pred_len': 24,
     'batch_size': 32,
@@ -9,12 +9,12 @@ CONFIG = {
     'epochs': 50,
     'patience': 7,
     'event_weight': 5.0,
-    'seed':42,
-    # CEEMDAN parameters
+    'seed': 42,
+    # CEEMD (Complete Ensemble EMD) parameters - base approach
     'n_imfs': 12,
     'ceemd_trials': 100,
     # Data parameters
-    'window_size': 24,    
+    'window_size': 24,
     'event_percentile': 80,
     'site_col': 'site_no',
     'time_col': 'Time',
@@ -27,4 +27,17 @@ CONFIG = {
 RUNTIME_LOG = []
 STABILITY_LOG = []
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# Device configuration with GPU check
+def get_device():
+    """Get the best available device (CUDA GPU or CPU)."""
+    if torch.cuda.is_available():
+        device = torch.device('cuda')
+        print(f"Using GPU: {torch.cuda.get_device_name(0)}")
+        print(f"CUDA version: {torch.version.cuda}")
+        print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
+    else:
+        device = torch.device('cpu')
+        print("CUDA not available, using CPU")
+    return device
+
+device = get_device()
