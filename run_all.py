@@ -3,11 +3,23 @@
 Main runner script for Water Quality Forecasting Models
 Uses only EC and pH features from USGS data
 
-This script runs all four model variants:
-1. Baselines_model: Basic CEEMDAN-LTSF
-2. ceemdan_features_model: CEEMDAN with rolling features
-3. ceemdan_EVloss: CEEMDAN with event-weighted loss
-4. Full_model: Complete pipeline with all enhancements
+This script runs all four model directories:
+
+1. Baselines_model: Basic CEEMDAN-LTSF (DLinear, NLinear only)
+2. ceemdan_features_model: CEEMDAN + rolling features (DLinear, NLinear)
+3. ceemdan_EVloss: CEEMDAN + event-weighted loss (DLinear, NLinear)
+4. Full_model: Complete pipeline with ALL models:
+   - Linear: DLinear, NLinear, LTSF_Linear, RLinear
+   - Deep Learning: LSTM, Transformer
+   - Patch-based: PatchTST
+   - CEEMDAN variants: CEEMDAN-LSTM, CEEMDAN-Transformer, CEEMDAN-PatchTST
+   - Statistical: ARIMA
+
+To run ALL models including PatchTST, LSTM, Transformer:
+    python run_all.py --model full
+
+Or run Full_model directly:
+    cd Full_model && python main.py
 """
 
 import os
@@ -131,13 +143,20 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python run_all.py                    # Run all models
-  python run_all.py --model baselines  # Run only baselines model
-  python run_all.py --model features   # Run only features model
-  python run_all.py --model eventloss  # Run only event loss model
-  python run_all.py --model full       # Run only full model
+  python run_all.py                    # Run all 4 model directories
+  python run_all.py --model baselines  # Run Baselines_model (DLinear, NLinear)
+  python run_all.py --model features   # Run ceemdan_features_model
+  python run_all.py --model eventloss  # Run ceemdan_EVloss
+  python run_all.py --model full       # Run Full_model (ALL models incl. PatchTST, LSTM, Transformer)
   python run_all.py --visualize        # Run visualization only
   python run_all.py --list             # List available models
+
+Model Details:
+  baselines  : CEEMDAN + DLinear/NLinear (basic)
+  features   : CEEMDAN + rolling features + DLinear/NLinear
+  eventloss  : CEEMDAN + event-weighted loss + DLinear/NLinear
+  full       : ALL models (DLinear, NLinear, RLinear, PatchTST, LSTM, Transformer, ARIMA)
+               + CEEMDAN variants + XAI analysis + IMF pruning
         """
     )
 
