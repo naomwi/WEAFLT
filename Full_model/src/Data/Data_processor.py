@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from PyEMD import EEMD  # Using EEMD/CEEMD (Complete Ensemble EMD) - base approach
+from PyEMD import CEEMDAN  # Using CEEMDAN (Complete Ensemble EMD with Adaptive Noise)
 from tqdm.auto import tqdm
 
 class DataProcessor:
@@ -37,16 +37,16 @@ class DataProcessor:
         print(f"    Target columns: {self.target_cols}")
         return df
 
-    def apply_ceemd(self, df):
+    def apply_ceemdan(self, df):
         """
-        Apply CEEMD (Complete Ensemble EMD) decomposition to target columns.
-        This is the base approach - CEEMD-LTSF (not CEEMDAN-LTSF).
+        Apply CEEMDAN (Complete Ensemble EMD with Adaptive Noise) decomposition to target columns.
+        This is the advanced approach - CEEMDAN-LTSF.
         """
-        print(f"Applying CEEMD Decomposition (n_imfs={self.cfg['n_imfs']})...")
+        print(f"Applying CEEMDAN Decomposition (n_imfs={self.cfg['n_imfs']})...")
 
         process_list = []
         n_imfs = self.cfg['n_imfs']
-        trials = self.cfg.get('ceemd_trials', 10)
+        trials = self.cfg.get('ceemd_trials', 100)
 
         for site_id, site_df in df.groupby(self.cfg['site_col']):
             site_df = site_df.copy()
@@ -70,9 +70,9 @@ class DataProcessor:
                 try:
                     if len(signal) < 50: raise ValueError("Signal too short")
 
-                    # Use EEMD (Complete Ensemble EMD) - the base approach
-                    eemd = EEMD(trials=trials, noise_width=0.2, parallel=False)
-                    imfs = eemd.eemd(signal, max_imf=n_imfs)
+                    # Use CEEMDAN (Complete Ensemble EMD with Adaptive Noise)
+                    ceemdan = CEEMDAN(trials=trials, epsilon=0.2)
+                    imfs = ceemdan(signal, max_imf=n_imfs)
 
                     # Separate IMFs and residue (last component is residue)
                     if len(imfs) > 1:
@@ -94,6 +94,11 @@ class DataProcessor:
             process_list.append(site_df)
 
         return pd.concat(process_list, ignore_index=True)
+
+    # Alias for backward compatibility
+    def apply_ceemd(self, df):
+        """Backward compatible alias - now uses CEEMDAN"""
+        return self.apply_ceemdan(df)
 
     def generate_stats(self, df):
         print("Generating Statistical Features...")
@@ -148,18 +153,18 @@ class DataProcessor:
         Args:
             df_raw: Raw DataFrame
             type: Pipeline type
-                1 - Full pipeline (CEEMD + Stats + Events)
-                2 - CEEMD only
+                1 - Full pipeline (CEEMDAN + Stats + Events)
+                2 - CEEMDAN only
                 3 - Stats only
                 4 - Events only
         """
         df = self.load_and_clean(df_raw)
         if type == 1:
-            df = self.apply_ceemd(df)
+            df = self.apply_ceemdan(df)
             df = self.generate_stats(df)
             df = self.detect_events(df)
         elif type == 2:
-            df = self.apply_ceemd(df)
+            df = self.apply_ceemdan(df)
         elif type == 3:
             df = self.generate_stats(df)
         else:

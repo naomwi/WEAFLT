@@ -10,7 +10,7 @@ CONFIG = {
     'patience': 7,
     'event_weight': 5.0,
     'seed': 42,
-    # CEEMD (Complete Ensemble EMD) parameters - base approach
+    # CEEMDAN (Complete Ensemble EMD with Adaptive Noise) parameters
     'n_imfs': 12,
     'ceemd_trials': 100,
     # Data parameters

@@ -7,15 +7,14 @@ from torch.utils.data import DataLoader, Dataset
 from sklearn.preprocessing import StandardScaler
 from src.ltsf_linear import NLinear, DLinear
 from src.metrics import metric
-from src.path import DATA_DIR, SERIES_DIR, CHECKPOINTS_DIR,ROOT_DIR,CACHE_DIR
-from src.data_loader import FeatureDataset
+from src.path import DATA_DIR, SERIES_DIR, CHECKPOINTS_DIR, ROOT_DIR, CACHE_DIR
 from src.feature_engineering import create_change_aware_feature
 from src.decomposition import run_ceemdan
 from plot_visual import plot_all
 import warnings
 
 
-# Tắt cảnh báo
+# Disable warnings
 warnings.filterwarnings("ignore")
 
 # --- CONFIGURATION ---
@@ -37,100 +36,194 @@ MODELS = ['DLinear', 'NLinear']
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-def train_and_evaluate(model_name, pred_len, df_processed, scaler, target):
-    """Train and evaluate model for a specific target variable."""
-    in_channels = df_processed.shape[1]
-    print(f"\n>>> Experiment: {model_name} | Target: {target} | Horizon: {pred_len}h | Input Channels: {in_channels}")
-    
-    # Tạo Dataset
-    data_values = df_processed.values
-    train_set = FeatureDataset(data_values, BASE_CONFIG['seq_len'], pred_len, flag='train')
-    val_set   = FeatureDataset(data_values, BASE_CONFIG['seq_len'], pred_len, flag='val')
-    test_set  = FeatureDataset(data_values, BASE_CONFIG['seq_len'], pred_len, flag='test')
-    
+class IMFFeatureDataset(Dataset):
+    """Dataset for Per-IMF training with additional features."""
+    def __init__(self, imf_data, features_data, seq_len, pred_len, flag='train'):
+        self.seq_len = seq_len
+        self.pred_len = pred_len
+        self.scaler = None
+
+        # Combine IMF with features: IMF as first column
+        combined_data = np.column_stack([imf_data.reshape(-1, 1), features_data])
+
+        total_len = len(combined_data)
+        train_end = int(total_len * 0.7)
+        val_end = int(total_len * 0.8)
+
+        if flag == 'train':
+            self.data = combined_data[:train_end]
+            # Fit scaler on train data
+            self.scaler = StandardScaler()
+            self.scaler.fit(self.data)
+            self.data = self.scaler.transform(self.data)
+        elif flag == 'val':
+            self.data = combined_data[train_end - seq_len : val_end]
+        else:
+            self.data = combined_data[val_end - seq_len:]
+
+    def set_scaler(self, scaler):
+        """Set scaler and transform data."""
+        self.scaler = scaler
+        if scaler is not None:
+            self.data = scaler.transform(self.data)
+
+    def __getitem__(self, index):
+        s_end = index + self.seq_len
+        r_end = s_end + self.pred_len
+
+        seq_x = self.data[index:s_end]
+        seq_y = self.data[s_end:r_end, 0:1]  # Only IMF column as target
+
+        return torch.tensor(seq_x, dtype=torch.float32), torch.tensor(seq_y, dtype=torch.float32)
+
+    def __len__(self):
+        return len(self.data) - self.seq_len - self.pred_len + 1
+
+    def inverse(self, pred):
+        """Inverse transform for IMF predictions (column 0)."""
+        if self.scaler is not None:
+            dummy = np.zeros((len(pred), self.scaler.n_features_in_))
+            dummy[:, 0] = pred
+            inv = self.scaler.inverse_transform(dummy)
+            return inv[:, 0]
+        return pred
+
+
+def train_imf_model(model_name, pred_len, imf_data, features_data, imf_idx, target):
+    """Train a model for a single IMF with additional features."""
+    print(f"\n>>> {model_name} | IMF: {imf_idx} | Target: {target}")
+
+    # Create datasets
+    train_set = IMFFeatureDataset(imf_data, features_data, BASE_CONFIG['seq_len'], pred_len, flag='train')
+    val_set = IMFFeatureDataset(imf_data, features_data, BASE_CONFIG['seq_len'], pred_len, flag='val')
+    test_set = IMFFeatureDataset(imf_data, features_data, BASE_CONFIG['seq_len'], pred_len, flag='test')
+
+    # Share scaler from train set
+    val_set.set_scaler(train_set.scaler)
+    test_set.set_scaler(train_set.scaler)
+
     train_loader = DataLoader(train_set, batch_size=BASE_CONFIG['batch_size'], shuffle=True, drop_last=True)
-    val_loader   = DataLoader(val_set, batch_size=BASE_CONFIG['batch_size'], shuffle=False)
-    test_loader  = DataLoader(test_set, batch_size=1, shuffle=False)
-    
+    val_loader = DataLoader(val_set, batch_size=BASE_CONFIG['batch_size'], shuffle=False)
+    test_loader = DataLoader(test_set, batch_size=1, shuffle=False)
+
+    # Input channels = 1 (IMF) + features
+    in_channels = 1 + features_data.shape[1]
 
     if model_name == 'DLinear':
-        model = DLinear(BASE_CONFIG['seq_len'], pred_len,in_channels).to(device)
+        model = DLinear(BASE_CONFIG['seq_len'], pred_len, in_channels).to(device)
     else:
-        model = NLinear(BASE_CONFIG['seq_len'], pred_len,in_channels).to(device)
-        
+        model = NLinear(BASE_CONFIG['seq_len'], pred_len, in_channels).to(device)
+
     optimizer = torch.optim.Adam(model.parameters(), lr=BASE_CONFIG['lr'])
     criterion = nn.MSELoss()
-    
-    best_path = CHECKPOINTS_DIR / f"USGs/Features_{target}/{model_name}_P{pred_len}.pth"
+
+    best_path = CHECKPOINTS_DIR / f"USGs/Features_{target}/{model_name}_P{pred_len}_IMF{imf_idx}.pth"
     best_path.parent.mkdir(parents=True, exist_ok=True)
-    
+
     best_loss = float('inf')
 
     if not best_path.exists():
         for epoch in range(BASE_CONFIG['epochs']):
             model.train()
-            train_losses = []
             for bx, by in train_loader:
                 bx, by = bx.to(device), by.to(device)
                 optimizer.zero_grad()
-                
                 out = model(bx)
                 loss = criterion(out, by)
-                
                 loss.backward()
                 optimizer.step()
-                train_losses.append(loss.item())
-            
+
             model.eval()
             val_losses = []
             with torch.no_grad():
                 for bx, by in val_loader:
                     bx, by = bx.to(device), by.to(device)
                     out = model(bx)
-                    loss = criterion(out, by)
-                    val_losses.append(loss.item())
-            
+                    val_losses.append(criterion(out, by).item())
+
             avg_val_loss = np.mean(val_losses)
             if avg_val_loss < best_loss:
                 best_loss = avg_val_loss
                 torch.save(model.state_dict(), best_path)
-                print(f"Epoch {epoch}: Val Loss {avg_val_loss:.5f} -> Saved")
+    else:
+        print(f'>>> Found existing model, loading predictions...')
 
+    # Load best model and predict
     model.load_state_dict(torch.load(best_path))
     model.eval()
-    
-    preds_list = []
-    trues_list = []
-    
+
+    preds = []
     with torch.no_grad():
-        for bx, by in test_loader:
+        for bx, _ in test_loader:
             bx = bx.to(device)
             out = model(bx)
+            preds.append(test_set.inverse(out.detach().cpu().numpy().squeeze()))
 
-            pred_inv = test_set.inverse_target(out[:, :, 0].detach().cpu().numpy().squeeze(0), scaler)
-            true_inv = test_set.inverse_target(by[:, :, 0].detach().cpu().numpy().squeeze(0), scaler)
-            
-            preds_list.append(pred_inv)
-            trues_list.append(true_inv)
+    return np.array(preds), test_set.scaler
 
-    final_preds = np.array(preds_list) 
-    final_trues = np.array(trues_list)
-    
+
+def train_and_evaluate(model_name, pred_len, imfs, features_data, target):
+    """Train and evaluate model using Per-IMF approach with features."""
+    all_imf_preds = []
+    all_scalers = []
+    print(f"\n>>> Experiment: {model_name} | Target: {target} | Horizon: {pred_len}h | Per-IMF Training")
+
+    # Train each IMF separately
+    for i in range(imfs.shape[0]):
+        imf_data = imfs[i]
+        preds, scaler = train_imf_model(model_name, pred_len, imf_data, features_data, i, target)
+        all_imf_preds.append(preds)
+        all_scalers.append(scaler)
+
+    # Reconstruct: Sum all IMF predictions
+    final_preds = np.sum(all_imf_preds, axis=0)
+
+    # Get Ground Truth by summing all IMF actuals
+    final_trues = np.zeros_like(final_preds)
+    for i in range(imfs.shape[0]):
+        imf_data = imfs[i]
+        test_set = IMFFeatureDataset(imf_data, features_data, BASE_CONFIG['seq_len'], pred_len, flag='test')
+        test_set.set_scaler(all_scalers[i])
+
+        test_loader = DataLoader(test_set, batch_size=1, shuffle=False)
+        imf_trues = [test_set.inverse(by.numpy().squeeze()) for _, by in test_loader]
+
+        if i == 0:
+            final_trues = np.array(imf_trues)
+        else:
+            ml = min(len(final_trues), len(imf_trues))
+            final_trues = final_trues[:ml] + np.array(imf_trues)[:ml]
+
+    # Ensure same length
+    ml = min(len(final_preds), len(final_trues))
+    final_preds = final_preds[:ml]
+    final_trues = final_trues[:ml]
+
+    # Flatten for metrics
     preds_flat = final_preds.flatten()
     trues_flat = final_trues.flatten()
     m = metric(preds_flat, trues_flat)
-    
-    preds_visual = final_preds[:, -1].flatten()
-    trues_visual = final_trues[:, -1].flatten()
-    
+
+    # Visual series (last timestep)
+    if final_preds.ndim == 2:
+        preds_visual = final_preds[:, -1].flatten()
+        trues_visual = final_trues[:, -1].flatten()
+    else:
+        preds_visual = final_preds.flatten()
+        trues_visual = final_trues.flatten()
+
     return {
-        'RMSE': m[2], 'MAE': m[0], 'MAPE': m[1], 'R2': m[3], 
-        'preds_series': preds_visual, 
+        'RMSE': m[2], 'MAE': m[0], 'MAPE': m[1], 'R2': m[3],
+        'preds_series': preds_visual,
         'trues_series': trues_visual
     }
 
+
 def main():
     print(f"Training Device: {device}")
+    print("=" * 60)
+    print("CEEMDAN Features Model - Per-IMF Training")
+    print("=" * 60)
 
     csv_path = DATA_DIR / 'USGs/water_data_2021_2025_clean.csv'
     if not csv_path.exists():
@@ -157,6 +250,7 @@ def main():
         if imf_save_path.exists():
             print(f">>> Loading cached IMFs for {target}...")
             df_imfs = pd.read_csv(imf_save_path)
+            imfs = df_imfs.values.T  # Shape: [n_imfs, n_samples]
         else:
             print(f">>> Running CEEMDAN for {target}...")
             imfs = run_ceemdan(target_data, trials=BASE_CONFIG['ceemd_trials'], max_imfs=BASE_CONFIG['n_imfs'])
@@ -171,40 +265,21 @@ def main():
             percentile=BASE_CONFIG['percentile']
         )
 
-        len_diff = len(df_imfs) - len(df_features)
+        # Align IMFs with features
+        len_diff = imfs.shape[1] - len(df_features)
         if len_diff > 0:
-            df_imfs_trimmed = df_imfs.iloc[len_diff:].reset_index(drop=True)
-            df_features = df_features.reset_index(drop=True)
-            df_processed = pd.concat([df_features, df_imfs_trimmed], axis=1)
-        else:
-            df_processed = pd.concat([df_features.reset_index(drop=True), df_imfs.reset_index(drop=True)], axis=1)
+            imfs = imfs[:, len_diff:]  # Trim IMFs to match features length
 
-        print(f"Feature Columns: {df_features.columns.tolist()}")
-        print(f"IMF Columns: {df_imfs.columns.tolist()}")
-        print(f"Final Data Shape: {df_processed.shape}")
+        features_data = df_features.values
 
-        train_size = int(len(df_processed) * 0.7)
-        val_size = int(len(df_processed) * 0.1)
-
-        train_data = df_processed.iloc[:train_size]
-        val_data = df_processed.iloc[train_size:train_size + val_size]
-        test_data = df_processed.iloc[train_size + val_size:]
-
-        scaler = StandardScaler()
-        scaler.fit(train_data.values)
-
-        train_scaled = scaler.transform(train_data.values)
-        val_scaled = scaler.transform(val_data.values)
-        test_scaled = scaler.transform(test_data.values)
-
-        scaled_values = np.concatenate([train_scaled, val_scaled, test_scaled], axis=0)
-        df_scaled = pd.DataFrame(scaled_values, columns=df_processed.columns)
+        print(f"IMFs Shape: {imfs.shape}")
+        print(f"Features Shape: {features_data.shape}")
 
         results_summary = []
 
         for m_name in MODELS:
             for p_len in PRED_LENS:
-                res = train_and_evaluate(m_name, p_len, df_scaled, scaler, target)
+                res = train_and_evaluate(m_name, p_len, imfs, features_data, target)
 
                 results_summary.append({
                     'Target': target,
@@ -240,6 +315,7 @@ def main():
     print("\n" + "=" * 60)
     print(">>> ALL EXPERIMENTS COMPLETED!")
     print(f">>> Targets processed: {TARGETS}")
+    print(">>> Per-IMF Training: ENABLED")
     print("=" * 60)
 
 
