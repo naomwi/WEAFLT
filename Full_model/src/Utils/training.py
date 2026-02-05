@@ -21,10 +21,21 @@ def train_model(model, train_loader, val_loader, criterion, optimizer,
 
     if os.path.exists(save_path) and not force_train:
         print(f"Found existing model at '{save_path}'")
-        print(f"Skipping training & Loading weights...")
-        
-        model.load_state_dict(torch.load(save_path, map_location=device))
-        return model  
+        print(f"Attempting to load weights...")
+
+        try:
+            state_dict = torch.load(save_path, map_location=device)
+            model.load_state_dict(state_dict)
+            print(f"Successfully loaded weights. Skipping training.")
+            return model
+        except RuntimeError as e:
+            if "size mismatch" in str(e):
+                print(f"WARNING: Checkpoint dimension mismatch detected!")
+                print(f"  Error: {e}")
+                print(f"  Deleting incompatible checkpoint and retraining...")
+                os.remove(save_path)
+            else:
+                raise e  
     
     print(f"Start training for {epochs} epochs...")
     
