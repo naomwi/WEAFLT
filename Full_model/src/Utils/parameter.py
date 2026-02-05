@@ -18,10 +18,11 @@ CONFIG = {
     'event_percentile': 80,
     'site_col': 'site_no',
     'time_col': 'Time',
-    'log_vars': ['Flow', 'Turbidity', 'EC'],
-    'normal_vars': ['Temp', 'DO', 'pH'],
+    # Use only EC and pH features from USGS data
+    'log_vars': ['EC'],
+    'normal_vars': ['pH'],
     'split_date': '2024-01-01',
-    'targets': ['Turbidity_log', 'Flow_log', 'EC_log', 'DO', 'pH', 'Temp'],
+    'targets': ['EC_log', 'pH'],
     'event_col_suffix': '_event_flag',
 }
 RUNTIME_LOG = []

@@ -16,8 +16,8 @@ def load_raw_data(ec_path, ph_path):
     # Merge
     df = pd.merge(df_ec, df_ph, on='date', how='inner').sort_values('date')
     
-    # Fill missing values
-    df = df.interpolate(method='linear').fillna(method='bfill')
+    # Fill missing values (using bfill() instead of deprecated fillna(method='bfill'))
+    df = df.interpolate(method='linear').bfill()
     return df
 
 class IMFDataset(Dataset):

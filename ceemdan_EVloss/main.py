@@ -21,19 +21,20 @@ except ImportError:
 warnings.filterwarnings("ignore")
 
 BASE_CONFIG = {
-    'seq_len': 168,      
+    'seq_len': 168,
     'batch_size': 64,
     'lr': 0.0001,
     'epochs': 100,
-    'target': 'EC',
-    'window_size': 24,   
-    'percentile': 0.95,  
-    'ceemd_trials': 50,  
+    'window_size': 24,
+    'percentile': 0.95,
+    'ceemd_trials': 50,
     'n_imfs': 12,
     'event_weight': 3.0,
-    'patience': 10  
+    'patience': 10
 }
 
+# Use only EC and pH features from USGS data
+TARGETS = ['EC', 'pH']
 PRED_LENS = [6, 12, 24, 48, 96, 168]
 MODELS = ['DLinear', 'NLinear']
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -78,16 +79,17 @@ class FeatureDataset(Dataset):
         inv = scaler.inverse_transform(dummy)
         return inv[:, 0]
 
-def train_and_evaluate(model_name, pred_len, df_processed, scaler):
+def train_and_evaluate(model_name, pred_len, df_processed, scaler, target):
+    """Train and evaluate model for a specific target variable."""
     in_channels = df_processed.shape[1]
-    
+
     try:
         flag_idx = df_processed.columns.get_loc('Event_Flag')
     except KeyError:
-        flag_idx = -1 
+        flag_idx = -1
         print("Warning: Event_Flag not found, using last column.")
-    
-    print(f"\n>>> Model: {model_name} | Pred: {pred_len}h | In_Channels: {in_channels}")
+
+    print(f"\n>>> Model: {model_name} | Target: {target} | Horizon: {pred_len}h | In_Channels: {in_channels}")
     
     data_values = df_processed.values
     train_set = FeatureDataset(data_values, BASE_CONFIG['seq_len'], pred_len, 'train', flag_idx)
@@ -108,7 +110,7 @@ def train_and_evaluate(model_name, pred_len, df_processed, scaler):
     criterion = EventWeightedLoss(event_weight=BASE_CONFIG['event_weight'])
     
 
-    best_path = CHECKPOINTS_DIR / f"USGs/{model_name}_P{pred_len}.pth"
+    best_path = CHECKPOINTS_DIR / f"USGs/EventLoss_{target}/{model_name}_P{pred_len}.pth"
     best_path.parent.mkdir(parents=True, exist_ok=True)
     
     early_stopping = EarlyStopping(
@@ -193,88 +195,118 @@ def train_and_evaluate(model_name, pred_len, df_processed, scaler):
 # --- MAIN DRIVER ---
 def main():
     print(f"Device: {device}")
-    csv_path = DATA_DIR/'USGs/water_data_2021_2025_clean.csv'
-    
+    csv_path = DATA_DIR / 'USGs/water_data_2021_2025_clean.csv'
+
+    if not csv_path.exists():
+        print(f"Error: Data file not found at {csv_path}")
+        return
+
     df = pd.read_csv(csv_path)
-    df = df[df['site_no'] == 1463500] 
-    target_values = df[BASE_CONFIG['target']].values
-    
+    df = df[df['site_no'] == 1463500]
 
-    imf_save_path = CACHE_DIR/f"imfs_data_usgs_{BASE_CONFIG['target']}.csv"
-    if imf_save_path.exists():
-        print(">>> Load IMFs Cache...")
-        df_imfs = pd.read_csv(imf_save_path)
-    else:
-        print(">>> Running CEEMDAN...")
-        imfs = run_ceemdan(target_values, trials=BASE_CONFIG['ceemd_trials'], max_imfs=BASE_CONFIG['n_imfs'])
-        df_imfs = pd.DataFrame(imfs.T, columns=[f'IMF_{i}' for i in range(imfs.shape[0])])
-        imf_save_path.parent.mkdir(parents=True, exist_ok=True)
-        df_imfs.to_csv(imf_save_path, index=False)
+    all_results = []
 
-    # 2. Features + Event Flag (Hybrid part 2)
-    print(">>> Creating Change-aware Features & Event Flags...")
-    df_features = create_change_aware_features(
-        df, 
-        BASE_CONFIG['target'], 
-        BASE_CONFIG['window_size'], 
-        BASE_CONFIG['percentile']
-    )
+    # Process each target (EC and pH)
+    for target in TARGETS:
+        print(f"\n{'='*60}")
+        print(f">>> Processing Target: {target}")
+        print(f"{'='*60}")
 
-    # 3. Alignment & Concat
-    print(">>> Aligning Data...")
-    len_diff = len(df_imfs) - len(df_features)
-    if len_diff > 0:
-        df_imfs_trimmed = df_imfs.iloc[len_diff:].reset_index(drop=True)
-        df_features = df_features.reset_index(drop=True)
-        df_processed = pd.concat([df_features, df_imfs_trimmed], axis=1)
-    else:
-        df_processed = pd.concat([df_features.reset_index(drop=True), df_imfs.reset_index(drop=True)], axis=1)
-        
-    print(f"Final Input Shape: {df_processed.shape}")
-    print(f"Columns: {df_processed.columns.tolist()}")
+        target_values = df[target].values
 
+        # Cache IMFs
+        imf_save_path = CACHE_DIR / f"imfs_data_usgs_{target}.csv"
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-    train_size = int(len(df_processed) * 0.6)
-    val_size = int(len(df_processed) * 0.2)
-    
-    train_data = df_processed.iloc[:train_size]
-    val_data = df_processed.iloc[train_size : train_size + val_size]
-    test_data = df_processed.iloc[train_size + val_size :]
-    
-    scaler = StandardScaler()
-    scaler.fit(train_data.values) 
-    
-    scaled_values = np.concatenate([
-        scaler.transform(train_data.values),
-        scaler.transform(val_data.values),
-        scaler.transform(test_data.values)
-    ], axis=0)
-    df_scaled = pd.DataFrame(scaled_values, columns=df_processed.columns)
-    
+        if imf_save_path.exists():
+            print(f">>> Loading cached IMFs for {target}...")
+            df_imfs = pd.read_csv(imf_save_path)
+        else:
+            print(f">>> Running CEEMDAN for {target}...")
+            imfs = run_ceemdan(target_values, trials=BASE_CONFIG['ceemd_trials'], max_imfs=BASE_CONFIG['n_imfs'])
+            df_imfs = pd.DataFrame(imfs.T, columns=[f'IMF_{i}' for i in range(imfs.shape[0])])
+            df_imfs.to_csv(imf_save_path, index=False)
 
-    results_summary = []
-    for m_name in MODELS:
-        for p_len in PRED_LENS:
-            res = train_and_evaluate(m_name, p_len, df_scaled, scaler)
-            
-            results_summary.append({
-                'Model': m_name, 'Horizon': p_len, 
-                'RMSE': res['RMSE'], 'MAE': res['MAE'], 'R2': res['R2']
-            })
-            
-            series_df = pd.DataFrame({'Actual': res['trues_series'], 'Predicted': res['preds_series']})
-            save_path = SERIES_DIR / f"USGs/EventLoss/series_{m_name}_P{p_len}.csv"
-            save_path.parent.mkdir(parents=True, exist_ok=True)
-            series_df.to_csv(save_path, index=False)
-            
-            print(f"--> Done {m_name} {p_len}h: R2={res['R2']:.4f}")
+        # Features + Event Flag
+        print(f">>> Creating Change-aware Features & Event Flags for {target}...")
+        df_features = create_change_aware_features(
+            df,
+            target,
+            BASE_CONFIG['window_size'],
+            BASE_CONFIG['percentile']
+        )
 
-    final_res_path = DATA_DIR / f"USGs/final_results_eventloss.csv"
-    pd.DataFrame(results_summary).to_csv(final_res_path, index=False)
-    
-    if plot_all:
-        try: plot_all(BASE_CONFIG['target']) 
-        except: pass
+        # Alignment & Concat
+        print(">>> Aligning Data...")
+        len_diff = len(df_imfs) - len(df_features)
+        if len_diff > 0:
+            df_imfs_trimmed = df_imfs.iloc[len_diff:].reset_index(drop=True)
+            df_features = df_features.reset_index(drop=True)
+            df_processed = pd.concat([df_features, df_imfs_trimmed], axis=1)
+        else:
+            df_processed = pd.concat([df_features.reset_index(drop=True), df_imfs.reset_index(drop=True)], axis=1)
+
+        print(f"Final Input Shape: {df_processed.shape}")
+        print(f"Columns: {df_processed.columns.tolist()}")
+
+        train_size = int(len(df_processed) * 0.6)
+        val_size = int(len(df_processed) * 0.2)
+
+        train_data = df_processed.iloc[:train_size]
+        val_data = df_processed.iloc[train_size:train_size + val_size]
+        test_data = df_processed.iloc[train_size + val_size:]
+
+        scaler = StandardScaler()
+        scaler.fit(train_data.values)
+
+        scaled_values = np.concatenate([
+            scaler.transform(train_data.values),
+            scaler.transform(val_data.values),
+            scaler.transform(test_data.values)
+        ], axis=0)
+        df_scaled = pd.DataFrame(scaled_values, columns=df_processed.columns)
+
+        results_summary = []
+        for m_name in MODELS:
+            for p_len in PRED_LENS:
+                res = train_and_evaluate(m_name, p_len, df_scaled, scaler, target)
+
+                results_summary.append({
+                    'Target': target,
+                    'Model': m_name,
+                    'Horizon': p_len,
+                    'RMSE': res['RMSE'],
+                    'MAE': res['MAE'],
+                    'R2': res['R2'],
+                    'MAPE': res['MAPE']
+                })
+
+                series_df = pd.DataFrame({'Actual': res['trues_series'], 'Predicted': res['preds_series']})
+                save_path = SERIES_DIR / f"USGs/EventLoss/series_{m_name}_P{p_len}_{target}.csv"
+                save_path.parent.mkdir(parents=True, exist_ok=True)
+                series_df.to_csv(save_path, index=False)
+
+                print(f"--> Done {m_name} {p_len}h {target}: R2={res['R2']:.4f}")
+
+        # Save results for this target
+        final_res_path = DATA_DIR / f"USGs/final_results_eventloss_{target}.csv"
+        pd.DataFrame(results_summary).to_csv(final_res_path, index=False)
+        all_results.extend(results_summary)
+
+        if plot_all:
+            try:
+                plot_all(target)
+            except Exception as e:
+                print(f"Plot error: {e}")
+
+    # Save combined results
+    pd.DataFrame(all_results).to_csv(DATA_DIR / "USGs/final_results_eventloss_all.csv", index=False)
+
+    print("\n" + "=" * 60)
+    print(">>> ALL EXPERIMENTS COMPLETED!")
+    print(f">>> Targets processed: {TARGETS}")
+    print("=" * 60)
+
 
 if __name__ == "__main__":
     main()

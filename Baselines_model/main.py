@@ -16,29 +16,30 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # --- CONFIGURATION ---
 BASE_CONFIG = {
-    'seq_len': 168,      
+    'seq_len': 168,
     'batch_size': 64,
     'lr': 0.001,
-    'epochs': 50,        
+    'epochs': 50,
     'ceemd_trials': 50,
     'n_imfs': 12,
-    'target': 'EC'       
 }
 
+# Use only EC and pH features from USGS data
+TARGETS = ['EC', 'pH']
 PRED_LENS = [6, 12, 24, 48, 96, 168]
 MODELS = ['DLinear', 'NLinear']
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-def train_and_evaluate(model_name, pred_len, imfs):
-
+def train_and_evaluate(model_name, pred_len, imfs, target):
+    """Train and evaluate model for a specific target variable."""
     all_imf_preds = []
-    print(f"\n>>> Thí nghiệm: {model_name} | Dự báo: {pred_len}h")
-    
-    # Huấn luyện từng IMF
+    print(f"\n>>> Experiment: {model_name} | Target: {target} | Horizon: {pred_len}h")
+
+    # Train each IMF
     for i in range(imfs.shape[0]):
         print(f"\n>>> {model_name} | IMFs: {i}")
         imf_data = imfs[i]
-        best_path = CHECKPOINTS_DIR / f"USGs/{BASE_CONFIG['target']}/{model_name}_P{pred_len}_IMF{i}.pth"
+        best_path = CHECKPOINTS_DIR / f"USGs/{target}/{model_name}_P{pred_len}_IMF{i}.pth"
         best_path.parent.mkdir(parents=True, exist_ok=True)
         
         train_set = IMFDataset(imf_data, BASE_CONFIG['seq_len'], pred_len, flag='train')
@@ -114,51 +115,84 @@ def train_and_evaluate(model_name, pred_len, imfs):
     }
 
 def main():
-    # 1. Load data và CEEMDAN
-    #df = load_raw_data(DATA_DIR/'G_WTP-main/EC_origin.csv', DATA_DIR/'G_WTP-main/pH_origin.csv')
-    df = pd.read_csv(DATA_DIR/'USGs/water_data_2021_2025_clean.csv')
+    # Load USGS data (use only EC and pH)
+    csv_path = DATA_DIR / 'USGs/water_data_2021_2025_clean.csv'
+    if not csv_path.exists():
+        print(f"Error: Data file not found at {csv_path}")
+        return
+
+    df = pd.read_csv(csv_path)
     df = df[df['site_no'] == 1463500]
-    target_data = df[BASE_CONFIG['target']].values
-    
-    # Cache IMFs để không phải chạy lại CEEMDAN tốn thời gian
-    imfs = run_ceemdan(target_data, trials=BASE_CONFIG['ceemd_trials'], max_imfs=BASE_CONFIG['n_imfs'])
-    
-    # Lưu IMFs ra CSV để kiểm tra nếu cần
-    df_imfs = pd.DataFrame(imfs.T)
-    df_imfs.columns = [f'IMF_{i}' for i in range(imfs.shape[0])]
-    df_imfs.to_csv(CACHE_DIR/'imfs_data_usgs.csv', index=False)
 
-    results_summary = []
+    all_results = []
 
-    for m_name in MODELS:
-        for p_len in PRED_LENS:
-            res = train_and_evaluate(m_name, p_len, imfs)
-            
-            # Lưu metrics tổng quát
-            results_summary.append({
-                'Model': m_name, 'Horizon': p_len, 
-                'RMSE': res['RMSE'], 'MAE': res['MAE'], 
-                'MAPE': res['MAPE'], 'R2': res['R2']
-            })
-            
-            # Lưu chuỗi thời gian Actual vs Predicted
-            series_df = pd.DataFrame({
-                'Actual': res['trues_series'],
-                'Predicted': res['preds_series']
-            })
-            series_filename = SERIES_DIR / f"USGs/series_{m_name}_P{p_len}_{BASE_CONFIG['target']}.csv"
-            series_df.to_csv(series_filename, index=False)
-            
-            print(f"--> Đã lưu chuỗi thời gian vào: {series_filename.name}")
-            print(f"--> Done {m_name} {p_len}h: R2={res['R2']:.4f}")
+    # Process each target (EC and pH)
+    for target in TARGETS:
+        print(f"\n{'='*60}")
+        print(f">>> Processing Target: {target}")
+        print(f"{'='*60}")
 
-    # Xuất file kết quả cuối cùng
-    pd.DataFrame(results_summary).to_csv(DATA_DIR / f"USGs/final_results_{BASE_CONFIG['target']}.csv", index=False)
-    print(">>> ĐANG TRỰC QUAN HÓA DỰ ĐOÁN")
-    plot_all(BASE_CONFIG['target'])
-    print("\n" + "="*50)
-    print(">>> TẤT CẢ THÍ NGHIỆM ĐÃ HOÀN TẤT!")
-    print("="*50)
+        target_data = df[target].values
+
+        # Cache IMFs to avoid re-running CEEMDAN
+        cache_path = CACHE_DIR / f'imfs_data_usgs_{target}.csv'
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+        if cache_path.exists():
+            print(f">>> Loading cached IMFs for {target}...")
+            df_imfs = pd.read_csv(cache_path)
+            imfs = df_imfs.values.T
+        else:
+            print(f">>> Running CEEMDAN for {target}...")
+            imfs = run_ceemdan(target_data, trials=BASE_CONFIG['ceemd_trials'], max_imfs=BASE_CONFIG['n_imfs'])
+            df_imfs = pd.DataFrame(imfs.T)
+            df_imfs.columns = [f'IMF_{i}' for i in range(imfs.shape[0])]
+            df_imfs.to_csv(cache_path, index=False)
+
+        results_summary = []
+
+        for m_name in MODELS:
+            for p_len in PRED_LENS:
+                res = train_and_evaluate(m_name, p_len, imfs, target)
+
+                results_summary.append({
+                    'Target': target,
+                    'Model': m_name,
+                    'Horizon': p_len,
+                    'RMSE': res['RMSE'],
+                    'MAE': res['MAE'],
+                    'MAPE': res['MAPE'],
+                    'R2': res['R2']
+                })
+
+                # Save time series
+                series_df = pd.DataFrame({
+                    'Actual': res['trues_series'],
+                    'Predicted': res['preds_series']
+                })
+                series_path = SERIES_DIR / f"USGs/series_{m_name}_P{p_len}_{target}.csv"
+                series_path.parent.mkdir(parents=True, exist_ok=True)
+                series_df.to_csv(series_path, index=False)
+
+                print(f"--> Saved series to: {series_path.name}")
+                print(f"--> Done {m_name} {p_len}h {target}: R2={res['R2']:.4f}")
+
+        # Save results for this target
+        results_df = pd.DataFrame(results_summary)
+        results_df.to_csv(DATA_DIR / f"USGs/final_results_{target}.csv", index=False)
+        all_results.extend(results_summary)
+
+        # Visualize
+        print(f">>> Generating plots for {target}...")
+        plot_all(target)
+
+    # Save combined results
+    pd.DataFrame(all_results).to_csv(DATA_DIR / "USGs/final_results_all.csv", index=False)
+
+    print("\n" + "=" * 60)
+    print(">>> ALL EXPERIMENTS COMPLETED!")
+    print(f">>> Targets processed: {TARGETS}")
+    print("=" * 60)
 
 if __name__ == "__main__":
     main()

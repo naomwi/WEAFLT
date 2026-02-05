@@ -21,19 +21,39 @@ plt.style.use("seaborn-v0_8")
 
 # --- preprocess data ---
 def data_processing():
-    df = pd.read_csv(DATA_DIR/'New_data/USGS/water_data_2021_2025_clean.csv')
+    # Try multiple paths for USGS data
+    possible_paths = [
+        DATA_DIR / 'USGs/water_data_2021_2025_clean.csv',
+        DATA_DIR / 'New_data/USGS/water_data_2021_2025_clean.csv',
+    ]
+
+    csv_path = None
+    for path in possible_paths:
+        if path.exists():
+            csv_path = path
+            break
+
+    if csv_path is None:
+        raise FileNotFoundError(f"USGS data not found. Tried: {possible_paths}")
+
+    print(f">>> Loading data from: {csv_path}")
+    df = pd.read_csv(csv_path)
+
     processor = DataProcessor(CONFIG)
     df_final = processor.run_pipeline(df)
     cols = df_final.columns
     print(f"Total columns: {len(cols)}")
-    print("Sample Columns:", cols[:5])
+    print("Sample Columns:", cols[:5].tolist())
     print("Sample Residue:", [c for c in cols if 'residue' in c][:2])
     print("Sample Event:", [c for c in cols if 'event_flag' in c][:2])
-    print(f"Total columns: {len(cols)}")
-    print("Sample Columns:", cols[:5])
-    print("Sample Residue:", [c for c in cols if 'residue' in c][:2])
-    print("Sample Event:", [c for c in cols if 'event_flag' in c][:2])
-    df_final.to_csv(DATA_DIR/"New_data/Training_data/Final_Processed_Data.csv", index=False)
+
+    # Save processed data
+    output_path = OUTPUT_DIR / "Final_Processed_Data.csv"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    df_final.to_csv(output_path, index=False)
+    print(f">>> Saved processed data to: {output_path}")
+
+    return df_final
 
 def main():
     print("="*80)
