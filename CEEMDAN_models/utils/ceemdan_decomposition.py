@@ -15,24 +15,34 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from config import CEEMDAN_CONFIG, IMF_DIR
 
 
-def decompose_series(series: np.ndarray, n_imfs: int = 12) -> dict:
+def decompose_series(series: np.ndarray, n_imfs: int = 12, verbose: bool = True) -> dict:
     """
     Decompose a single time series using CEEMDAN.
 
     Args:
         series: 1D numpy array of the time series
         n_imfs: Maximum number of IMFs to extract
+        verbose: Print progress
 
     Returns:
         dict with 'imfs' (list of IMF arrays) and 'residue' (1D array)
     """
+    if verbose:
+        print(f"  Starting CEEMDAN with {CEEMDAN_CONFIG['trials']} trials...")
+        print(f"  This may take a while for {len(series)} data points...")
+
     ceemdan = CEEMDAN(
         trials=CEEMDAN_CONFIG['trials'],
-        epsilon=CEEMDAN_CONFIG['noise_width']
+        epsilon=CEEMDAN_CONFIG['noise_width'],
+        parallel=True,  # Enable parallel processing
+        processes=None,  # Use all available cores
     )
 
     # Perform decomposition
     imfs = ceemdan.ceemdan(series, max_imf=n_imfs)
+
+    if verbose:
+        print(f"  Decomposition complete! Got {len(imfs)} components.")
 
     # Separate IMFs and residue
     # Last component is typically the residue (trend)
@@ -72,7 +82,7 @@ def decompose_and_save(data: pd.Series, save_dir: Path, prefix: str = "ec"):
 
     print(f"Decomposing {len(values)} data points into {n_imfs} IMFs + residue...")
 
-    result = decompose_series(values, n_imfs=n_imfs)
+    result = decompose_series(values, n_imfs=n_imfs, verbose=True)
 
     saved_files = {}
 

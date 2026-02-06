@@ -16,7 +16,7 @@ RESULTS_DIR = ROOT_DIR / "results"
 CEEMDAN_CONFIG = {
     'n_imfs': 12,           # Number of IMFs (will also have 1 residue = 13 total components)
     'noise_width': 0.05,    # Noise standard deviation
-    'trials': 100,          # Number of ensemble trials
+    'trials': 20,           # Reduced for 217k data points (was 100)
 }
 
 # Data Configuration
