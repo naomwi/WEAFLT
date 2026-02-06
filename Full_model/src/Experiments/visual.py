@@ -63,21 +63,38 @@ def plot_runtime():
 
 def plot_horizon():
     csv_path = REPORT_DIR/"horizon_comparison.csv"
-    if not os.path.exists(csv_path): return
+    if not os.path.exists(csv_path):
+        print(f"Skipping plot_horizon: {csv_path} not found")
+        return
 
     df = pd.read_csv(csv_path)
-    
+
+    # Check for possible column names
+    horizon_col = None
+    for col in ["Horizon", "horizon", "Pred_Len", "pred_len"]:
+        if col in df.columns:
+            horizon_col = col
+            break
+
+    if horizon_col is None:
+        print(f"Skipping plot_horizon: No horizon column found. Columns: {df.columns.tolist()}")
+        return
+
+    if "MAE" not in df.columns or "RMSE" not in df.columns:
+        print(f"Skipping plot_horizon: Missing MAE/RMSE columns. Columns: {df.columns.tolist()}")
+        return
+
     plt.figure()
-    sns.lineplot(data=df, x="Horizon", y="MAE", marker="o", linewidth=2.5, label="MAE", color="blue")
-    sns.lineplot(data=df, x="Horizon", y="RMSE", marker="s", linewidth=2.5, label="RMSE", color="red")
-    
+    sns.lineplot(data=df, x=horizon_col, y="MAE", marker="o", linewidth=2.5, label="MAE", color="blue")
+    sns.lineplot(data=df, x=horizon_col, y="RMSE", marker="s", linewidth=2.5, label="RMSE", color="red")
+
     plt.title("Forecasting Performance vs Horizon", fontsize=14, fontweight='bold')
     plt.xlabel("Prediction Horizon (Hours)")
     plt.ylabel("Error")
-    plt.xticks(df["Horizon"].unique()) # Đảm bảo hiện đúng các mốc 24, 48...
+    plt.xticks(df[horizon_col].unique())
     plt.legend()
     plt.grid(True, linestyle='--')
-    
+
     save_plot("horizon_analysis.png")
 
 def plot_alpha():
@@ -194,21 +211,79 @@ def plot_all():
     plot_ablation()
     plot_stability()
 
-    df = pd.read_csv(DATA_DIR/"New_data/Training_data/Final_Processed_Data.csv")
-    loaders,_,split_info = loaders, _, info = create_dataloaders_advanced(df, CONFIG['targets'], CONFIG['seq_len'], CONFIG['pred_len'], CONFIG['batch_size'])
-    train_loader, val_loader, test_loader = loaders
-    model = DLinear(input_dim=87,output_dim=6,seq_len=CONFIG['seq_len'],pred_len=CONFIG['pred_len'])
-    model_path = OUTPUT_DIR/"model/best_model_DLinear_len24_alpha1.0None.pth"
-    model.load_state_dict(torch.load(model_path, map_location=device))
-    model.to(device)
-    model.eval()
-    results = evaluate_model(model,test_loader,device,split_info)
-    y_true = results['raw_data']['actuals'] # (N, 24, 6)
-    y_pred = results['raw_data']['preds']   # (N, 24, 6)
-    target_names = split_info.get('target_names', [])
-    
-    for i in [0,10,20,50,100]:
-        plot_all_targets_sample(y_true, y_pred, target_names, sample_idx=i)
+    # Try to load processed data and generate sample plots
+    try:
+        # Try multiple possible paths
+        possible_paths = [
+            OUTPUT_DIR / "Final_Processed_Data.csv",
+            DATA_DIR / "New_data/Training_data/Final_Processed_Data.csv",
+            DATA_DIR / "USGs/water_data_2021_2025_clean.csv",
+        ]
+
+        df = None
+        for path in possible_paths:
+            if os.path.exists(path):
+                df = pd.read_csv(path)
+                print(f"Loaded data from: {path}")
+                break
+
+        if df is None:
+            print("Skipping sample plots: No data file found")
+            print(f"All plots saved to '{FIGURE_DIR}' folder.")
+            return
+
+        loaders, _, split_info = create_dataloaders_advanced(
+            df, CONFIG['targets'], CONFIG['seq_len'], CONFIG['pred_len'], CONFIG['batch_size']
+        )
+        train_loader, val_loader, test_loader = loaders
+
+        # Get dimensions from data
+        input_dim = split_info['n_features']
+        output_dim = split_info['n_targets']
+
+        model = DLinear(input_dim=input_dim, output_dim=output_dim,
+                       seq_len=CONFIG['seq_len'], pred_len=CONFIG['pred_len'])
+
+        # Try to find a trained model
+        model_paths = [
+            OUTPUT_DIR / "model/best_model_DLinear_len24_alpha5.042.pth",
+            OUTPUT_DIR / "model/best_model_DLinear_len24_alpha1.042.pth",
+            OUTPUT_DIR / "model/best_model_DLinear_len24_alpha1.0None.pth",
+        ]
+
+        model_loaded = False
+        for model_path in model_paths:
+            if os.path.exists(model_path):
+                try:
+                    model.load_state_dict(torch.load(model_path, map_location=device))
+                    model_loaded = True
+                    print(f"Loaded model from: {model_path}")
+                    break
+                except Exception as e:
+                    print(f"Failed to load {model_path}: {e}")
+                    continue
+
+        if not model_loaded:
+            print("Skipping sample plots: No compatible model found")
+            print(f"All plots saved to '{FIGURE_DIR}' folder.")
+            return
+
+        model.to(device)
+        model.eval()
+        results = evaluate_model(model, test_loader, device, split_info)
+        y_true = results['raw_data']['actuals']
+        y_pred = results['raw_data']['preds']
+        target_names = split_info.get('target_names', [])
+
+        # Generate sample plots for valid indices
+        max_samples = len(y_true)
+        sample_indices = [i for i in [0, 10, 20, 50, 100] if i < max_samples]
+        for i in sample_indices:
+            plot_all_targets_sample(y_true, y_pred, target_names, sample_idx=i)
+
+    except Exception as e:
+        print(f"Error generating sample plots: {e}")
+
     print(f"All plots saved to '{FIGURE_DIR}' folder.")
 
 if __name__ == "__main__":

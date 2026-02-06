@@ -222,7 +222,7 @@ def exp_alpha_sensitivity(df):
         print(f"   Alpha = {alpha}...")
         metrics = run_single_trial(loaders, info, "DLinear", override_config={'event_weight': alpha})
         metrics['Alpha'] = alpha
-        results.append(metrics.popitem())
+        results.append(metrics)
         
     pd.DataFrame(results).to_csv(OUTPUT_DIR/"report/alpha_sensitivity.csv", index=False)
     print("Alpha sensitivity comparision SAVED!!")
@@ -244,7 +244,7 @@ def exp_horizon_comparison(df):
         
         metrics = run_single_trial(loaders, info, "DLinear", override_config={'pred_len': h})
         metrics['Horizon'] = h
-        results.append(metrics.popitem())
+        results.append(metrics)
         
     pd.DataFrame(results).to_csv(OUTPUT_DIR/"report/horizon_comparison.csv", index=False)
     print("Horizon comparision comparision SAVED!!")
@@ -262,7 +262,7 @@ def exp_stability(df):
         seed_everything(s) # Đặt seed trước khi init model
         metrics = run_single_trial(loaders, info, "DLinear",name_suffix=f"_seed{s}")
         metrics['Seed'] = s
-        results.append(metrics.popitem())
+        results.append(metrics)
         
     pd.DataFrame(results).to_csv(OUTPUT_DIR/"report/stability_report.csv", index=False)
     print("Stability comparision SAVED!!")
@@ -278,12 +278,12 @@ def exp_ablation_study(df):
     print("   Running Proposed Method...")
     m1 = run_single_trial(loaders, info, "DLinear", override_config={'event_weight': 5.0})
     m1['Method'] = "Proposed (Weighted Loss)"
-    results.append(m1.popitem())
-    
+    results.append(m1)
+
     print("   Running Baseline Method...")
     m2 = run_single_trial(loaders, info, "DLinear", override_config={'event_weight': 1.0})
     m2['Method'] = "Baseline (Standard MSE)"
-    results.append(m2.popitem())
+    results.append(m2)
     
     pd.DataFrame(results).to_csv(OUTPUT_DIR/"report/ablation_study.csv", index=False)
     print("Ablation study SAVED!!")
