@@ -39,49 +39,64 @@ class TimeSeriesDataset(Dataset):
         return x.unsqueeze(-1), y.unsqueeze(-1)  # Add feature dimension
 
 
-def load_raw_data(data_path: Optional[Path] = None) -> pd.DataFrame:
+def load_raw_data(data_path: Optional[Path] = None, site_no: int = 1463500) -> pd.DataFrame:
     """
-    Load raw data from CSV file.
+    Load raw data from CSV file and filter by site.
 
     Args:
         data_path: Path to CSV file. If None, searches in default locations.
+        site_no: Site number to filter (default: 1463500, same as ceemdan_EVloss)
 
     Returns:
-        pandas DataFrame with the data
+        pandas DataFrame with the data (filtered by site)
     """
+    df = None
+
     if data_path is not None and Path(data_path).exists():
-        return pd.read_csv(data_path)
+        df = pd.read_csv(data_path)
+    else:
+        # Search for data in common locations
+        possible_paths = [
+            DATA_DIR / "water_data_2021_2025_clean.csv",
+            DATA_DIR / "USGS" / "water_data_2021_2025_clean.csv",
+            Path(__file__).resolve().parents[2] / "Baselines_model" / "data" / "USGs" / "water_data_2021_2025_clean.csv",
+            Path(__file__).resolve().parents[2] / "Full_model" / "data" / "USGs" / "water_data_2021_2025_clean.csv",
+        ]
 
-    # Search for data in common locations
-    possible_paths = [
-        DATA_DIR / "water_data_2021_2025_clean.csv",
-        DATA_DIR / "USGS" / "water_data_2021_2025_clean.csv",
-        Path(__file__).resolve().parents[2] / "Baselines_model" / "data" / "USGs" / "water_data_2021_2025_clean.csv",
-        Path(__file__).resolve().parents[2] / "Full_model" / "data" / "USGs" / "water_data_2021_2025_clean.csv",
-    ]
+        for path in possible_paths:
+            if path.exists():
+                print(f"Loading data from: {path}")
+                df = pd.read_csv(path)
+                break
 
-    for path in possible_paths:
-        if path.exists():
-            print(f"Loading data from: {path}")
-            return pd.read_csv(path)
+    if df is None:
+        raise FileNotFoundError(f"Data file not found. Tried: {possible_paths}")
 
-    raise FileNotFoundError(f"Data file not found. Tried: {possible_paths}")
+    # Filter by site_no (same as ceemdan_EVloss)
+    if 'site_no' in df.columns and site_no is not None:
+        df = df[df['site_no'] == site_no]
+        print(f"Filtered to site_no={site_no}: {len(df)} samples")
+
+    return df
 
 
 def prepare_data_splits(
     data: np.ndarray,
     train_ratio: float = 0.7,
     val_ratio: float = 0.15,
-    test_ratio: float = 0.15
+    test_ratio: float = 0.15,
+    seq_len: int = 168
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Split data into train/val/test sets chronologically.
+    Includes seq_len overlap for val/test to provide context for first predictions.
 
     Args:
         data: 1D numpy array
         train_ratio: Ratio for training data
         val_ratio: Ratio for validation data
         test_ratio: Ratio for test data
+        seq_len: Sequence length for overlap (provides context)
 
     Returns:
         Tuple of (train_data, val_data, test_data)
@@ -91,10 +106,11 @@ def prepare_data_splits(
     val_end = int(n * (train_ratio + val_ratio))
 
     train_data = data[:train_end]
-    val_data = data[train_end:val_end]
-    test_data = data[val_end:]
+    # Include seq_len overlap for val/test context (same as ceemdan_EVloss)
+    val_data = data[train_end - seq_len:val_end]
+    test_data = data[val_end - seq_len:]
 
-    print(f"Data split: Train={len(train_data)}, Val={len(val_data)}, Test={len(test_data)}")
+    print(f"Data split: Train={len(train_data)}, Val={len(val_data)} (with {seq_len} overlap), Test={len(test_data)} (with {seq_len} overlap)")
 
     return train_data, val_data, test_data
 
@@ -165,12 +181,13 @@ class IMFDataManager:
         Returns:
             Tuple of (train_loader, val_loader, test_loader)
         """
-        # Split data
+        # Split data (with seq_len overlap for val/test)
         train_data, val_data, test_data = prepare_data_splits(
             component_data,
             DATA_CONFIG['train_ratio'],
             DATA_CONFIG['val_ratio'],
-            DATA_CONFIG['test_ratio']
+            DATA_CONFIG['test_ratio'],
+            seq_len=seq_len
         )
 
         # Scale data (fit on train only)

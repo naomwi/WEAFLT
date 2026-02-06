@@ -45,12 +45,32 @@ def setup_directories():
     print("Directories created.")
 
 
-def run_decomposition(target_data: np.ndarray) -> dict:
+def check_cached_imfs() -> bool:
+    """Check if IMFs are already cached."""
+    n_imfs = CEEMDAN_CONFIG['n_imfs']
+
+    # Check if all IMF files exist
+    for i in range(n_imfs):
+        imf_file = IMF_DIR / f"ec_imf_{i+1}.npy"
+        if not imf_file.exists():
+            return False
+
+    # Check residue
+    residue_file = IMF_DIR / "ec_residue.npy"
+    if not residue_file.exists():
+        return False
+
+    return True
+
+
+def run_decomposition(target_data: np.ndarray, force: bool = False) -> dict:
     """
     Run CEEMDAN decomposition and save IMFs.
+    Uses cached IMFs if available (same as ceemdan_EVloss).
 
     Args:
         target_data: Raw target (EC) data
+        force: Force re-decomposition even if cached
 
     Returns:
         Dictionary with IMF data
@@ -58,6 +78,15 @@ def run_decomposition(target_data: np.ndarray) -> dict:
     print("\n" + "="*60)
     print("STEP 1: CEEMDAN DECOMPOSITION")
     print("="*60)
+
+    # Check for cached IMFs (avoid slow re-computation)
+    if not force and check_cached_imfs():
+        print("Found cached IMFs! Loading from files...")
+        imf_result = load_imfs(IMF_DIR, prefix='ec', n_imfs=CEEMDAN_CONFIG['n_imfs'])
+        print(f"  Loaded {len(imf_result['imfs'])} IMFs + residue from cache")
+        return imf_result
+
+    print("No cached IMFs found. Running CEEMDAN decomposition...")
 
     # Decompose and save
     _, imf_result = decompose_and_save(
@@ -222,7 +251,7 @@ def main(args):
 
     # STEP 1: Decomposition
     if not args.train_only and not args.evaluate_only:
-        imf_data = run_decomposition(target_data)
+        imf_data = run_decomposition(target_data, force=args.force_decompose)
     else:
         # Load existing decomposition
         print("\nLoading existing decomposition...")
@@ -264,6 +293,8 @@ if __name__ == "__main__":
                         help='Only train models (requires decomposed data)')
     parser.add_argument('--evaluate-only', action='store_true',
                         help='Only evaluate (requires trained models)')
+    parser.add_argument('--force-decompose', action='store_true',
+                        help='Force re-run CEEMDAN even if cached')
 
     args = parser.parse_args()
     main(args)
