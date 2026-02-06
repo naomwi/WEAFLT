@@ -70,7 +70,8 @@ def create_dataloaders_advanced(df, target_cols, seq_len, pred_len, batch_size=3
     
     all_numeric = [c for c in df.columns if c not in excluded_input_cols and np.issubdtype(df[c].dtype, np.number)]
     event_cols_found = [c for c in all_numeric if 'event' in c or 'flag' in c or 'extreme' in c]
-    feature_cols = [c for c in all_numeric if c not in event_cols_found]
+    # IMPORTANT: Exclude target_cols from feature_cols to avoid double scaling!
+    feature_cols = [c for c in all_numeric if c not in event_cols_found and c not in target_cols]
     event_cols = []
 
     print(f"Input Features: {len(feature_cols)} (Excluded {len(event_cols_found)} event columns)")

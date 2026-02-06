@@ -68,7 +68,7 @@ def main():
     print("="*80)
     # Chạy lần lượt (Bạn có thể comment dòng nào không thích chạy)
     print("--> MODEL COMPARISION <-- ")
-    exp_model_comparison(df_main)
+    exp_model_comparison(df_main, include_all_baselines=True)
     print("="*80)
 
     print("--> ALPHA SENSITIVITY <-- ")
