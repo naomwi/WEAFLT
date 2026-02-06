@@ -34,8 +34,6 @@ def decompose_series(series: np.ndarray, n_imfs: int = 12, verbose: bool = True)
     ceemdan = CEEMDAN(
         trials=CEEMDAN_CONFIG['trials'],
         epsilon=CEEMDAN_CONFIG['noise_width'],
-        parallel=True,  # Enable parallel processing
-        processes=None,  # Use all available cores
     )
 
     # Perform decomposition
