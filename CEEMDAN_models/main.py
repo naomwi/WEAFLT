@@ -28,6 +28,7 @@ from utils.ceemdan_decomposition import decompose_and_save, load_imfs
 from utils.metrics import print_metrics
 from train import train_all_components, get_device
 from evaluate import run_evaluation, generate_comparison_report, plot_predictions
+from plot_visual import plot_all
 
 
 def setup_directories():
@@ -39,6 +40,7 @@ def setup_directories():
         MODEL_DIR,
         RESULTS_DIR / 'plots',
         RESULTS_DIR / 'metrics',
+        RESULTS_DIR / 'series',  # For Actual vs Predicted CSV files
     ]
     for d in dirs:
         os.makedirs(d, exist_ok=True)
@@ -273,6 +275,12 @@ def main(args):
     # STEP 3: Evaluation
     results_df = run_full_evaluation(imf_data, target_data, device)
 
+    # STEP 4: Generate series plots (same style as Baselines_model)
+    print("\n" + "="*60)
+    print("STEP 4: GENERATING PLOTS")
+    print("="*60)
+    plot_all('EC')
+
     # Print summary
     print_summary(results_df)
 
@@ -282,7 +290,8 @@ def main(args):
     print(f"\nResults saved to: {RESULTS_DIR}")
     print("  - metrics/full_evaluation_results.csv")
     print("  - metrics/summary_results.csv")
-    print("  - plots/*.png")
+    print("  - series/*.csv (Actual vs Predicted)")
+    print("  - plots/*.png (comparison plots)")
 
 
 if __name__ == "__main__":

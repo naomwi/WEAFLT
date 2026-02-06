@@ -190,12 +190,46 @@ def evaluate_full_prediction(
     }
 
 
+def save_series_csv(
+    actuals: np.ndarray,
+    predictions: np.ndarray,
+    model_name: str,
+    horizon: int,
+    target: str = 'EC'
+):
+    """
+    Save Actual vs Predicted series to CSV file.
+    Same format as Baselines_model.
+
+    Args:
+        actuals: Actual values
+        predictions: Predicted values
+        model_name: Name of model
+        horizon: Prediction horizon
+        target: Target variable name
+    """
+    series_dir = RESULTS_DIR / 'series'
+    os.makedirs(series_dir, exist_ok=True)
+
+    # Same naming convention as Baselines_model
+    filename = f"series_{model_name}_P{horizon}_{target}.csv"
+    filepath = series_dir / filename
+
+    df = pd.DataFrame({
+        'Actual': actuals,
+        'Predicted': predictions
+    })
+    df.to_csv(filepath, index=False)
+    print(f"  Saved series: {filename}")
+
+
 def run_evaluation(
     model_name: str,
     horizons: List[int] = None,
     imf_data: Dict = None,
     original_data: np.ndarray = None,
-    device: torch.device = None
+    device: torch.device = None,
+    save_series: bool = True
 ) -> pd.DataFrame:
     """
     Run evaluation across all horizons.
@@ -206,6 +240,7 @@ def run_evaluation(
         imf_data: IMF decomposition data
         original_data: Original target data
         device: Evaluation device
+        save_series: Whether to save series CSV files
 
     Returns:
         DataFrame with evaluation results
@@ -232,6 +267,16 @@ def run_evaluation(
             results.append(metrics)
 
             print_metrics(metrics, f"{model_name} (h={h})")
+
+            # Save series CSV (same as Baselines_model)
+            if save_series:
+                save_series_csv(
+                    eval_result['actuals'],
+                    eval_result['predictions'],
+                    model_name,
+                    h,
+                    target='EC'
+                )
 
         except Exception as e:
             print(f"Error evaluating {model_name} at horizon {h}: {e}")
