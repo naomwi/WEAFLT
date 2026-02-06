@@ -153,7 +153,8 @@ def evaluate_model(model, loader, device, split_info):
     actuals = np.concatenate(actuals_total).flatten()
     events = np.concatenate(events_total).flatten()
 
-    rmse = np.sqrt(mean_squared_error(actuals, preds))
+    mse = mean_squared_error(actuals, preds)
+    rmse = np.sqrt(mse)
     mae = mean_absolute_error(actuals, preds)
     r2 = r2_score(actuals, preds)
     
@@ -175,10 +176,11 @@ def evaluate_model(model, loader, device, split_info):
     )
 
     return {
+        "MSE": mse,
         "RMSE": rmse,
         "MAE": mae,
-        "R2": r2,
         "MAPE": mape,
+        "R2": r2,
         "SF_MAE": sf_mae,
         "N_Events": len(event_indices),
         # Event detection metrics
