@@ -36,8 +36,8 @@ def decompose_series(series: np.ndarray, n_imfs: int = 12, verbose: bool = True)
         epsilon=CEEMDAN_CONFIG['noise_width'],
     )
 
-    # Perform decomposition
-    imfs = ceemdan.ceemdan(series, max_imf=n_imfs)
+    # Perform decomposition (callable style, same as ceemdan_EVloss)
+    imfs = ceemdan(series.reshape(-1), max_imf=n_imfs)
 
     if verbose:
         print(f"  Decomposition complete! Got {len(imfs)} components.")
