@@ -77,18 +77,26 @@ def create_change_aware_features(
 def create_event_flags(
     data: np.ndarray,
     percentile: float = 95.0,
-    train_end_idx: int = None
+    train_end_idx: int = None,
+    use_zscore: bool = True,
+    zscore_threshold: float = 2.0
 ) -> Tuple[np.ndarray, float]:
     """
-    Create event flags from ORIGINAL signal.
+    Create event flags from ORIGINAL signal using multi-method detection.
 
-    Event = 1 if |Δx| > percentile_95 threshold
-    Threshold is computed ONLY from training data.
+    Detects outliers/sudden changes using:
+    1. Percentile-based: |Δx| > percentile_95 threshold
+    2. Z-score based: |Δx| > mean + zscore_threshold * std
+
+    Event = 1 if EITHER condition is met (more sensitive to outliers)
+    Thresholds computed ONLY from training data.
 
     Args:
         data: 1D numpy array of ORIGINAL time series
         percentile: Percentile for threshold (default: 95)
         train_end_idx: Index where training data ends (for threshold computation)
+        use_zscore: Whether to also use z-score based detection (default: True)
+        zscore_threshold: Z-score threshold (default: 2.0 = ~95% CI)
 
     Returns:
         Tuple of (event_flags, threshold)
@@ -108,14 +116,30 @@ def create_event_flags(
     # Filter non-zero values for percentile
     nonzero = train_delta[train_delta > 1e-8]
     if len(nonzero) > 0:
-        threshold = np.percentile(nonzero, percentile)
+        threshold_percentile = np.percentile(nonzero, percentile)
     else:
-        threshold = 0.0
+        threshold_percentile = 0.0
 
-    # Create flags for ALL data using training threshold
-    event_flags = (abs_delta_x >= threshold).astype(np.float32)
+    # Percentile-based events
+    events_percentile = abs_delta_x >= threshold_percentile
 
-    return event_flags, threshold
+    # Z-score based events (more sensitive to extreme outliers)
+    if use_zscore and len(nonzero) > 0:
+        mean_delta = np.mean(nonzero)
+        std_delta = np.std(nonzero)
+        if std_delta > 1e-8:
+            threshold_zscore = mean_delta + zscore_threshold * std_delta
+            events_zscore = abs_delta_x >= threshold_zscore
+        else:
+            events_zscore = np.zeros(n, dtype=bool)
+    else:
+        events_zscore = np.zeros(n, dtype=bool)
+
+    # Combine: event if EITHER condition is met
+    event_flags = (events_percentile | events_zscore).astype(np.float32)
+
+    # Return percentile threshold for logging
+    return event_flags, threshold_percentile
 
 
 def combine_imf_with_features(

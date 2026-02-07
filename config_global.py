@@ -80,7 +80,7 @@ FEATURE_CONFIG = {
 MODEL_CONFIG = {
     # Linear models (can be larger on 3090)
     'dlinear': {
-        'kernel_size': 25,
+        'kernel_size': 7,  # Reduced from 25 to preserve outlier signals
     },
     'nlinear': {},
 
@@ -150,7 +150,7 @@ TRAIN_CONFIG = {
 LOSS_CONFIG = {
     'mse': {},
     'event_weighted': {
-        'event_weight': 0.5,  # Changed from 3.0
+        'event_weight': 2.0,  # Upweight outliers/events (was 0.5, now 2.0)
     },
 }
 

@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import Dataset, DataLoader
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, RobustScaler
 from pathlib import Path
 from typing import Tuple, Dict, Optional, List
 
@@ -93,9 +93,9 @@ class IMFDataset(Dataset):
         type_map = {'train': 0, 'val': 1, 'test': 2}
         idx = type_map[flag]
 
-        # Scale IMF values
+        # Scale IMF values using RobustScaler (preserves outliers better)
         if scaler is None:
-            self.scaler = StandardScaler()
+            self.scaler = RobustScaler()  # Robust to outliers
             train_imf = imf[:n_train].reshape(-1, 1)
             self.scaler.fit(train_imf)
         else:
@@ -103,9 +103,9 @@ class IMFDataset(Dataset):
 
         imf_scaled = self.scaler.transform(imf.reshape(-1, 1))
 
-        # Scale features
+        # Scale features using RobustScaler
         if feature_scaler is None:
-            self.feature_scaler = StandardScaler()
+            self.feature_scaler = RobustScaler()  # Robust to outliers
             train_features = features[:n_train]
             self.feature_scaler.fit(train_features)
         else:
