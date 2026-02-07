@@ -32,7 +32,11 @@ def load_raw_data(data_path: str, target_col: str, site_no: int = 1463500):
     elif 'date' in df.columns:
         df['date'] = pd.to_datetime(df['date'])
     df = df.sort_values('date').reset_index(drop=True)
-    df = df.infer_objects(copy=False).interpolate(method='linear').bfill().ffill()
+    # Handle missing values - compatible with older pandas versions
+    try:
+        df = df.infer_objects(copy=False).interpolate(method='linear').bfill().ffill()
+    except TypeError:
+        df = df.infer_objects().interpolate(method='linear').bfill().ffill()
     return df, df[target_col].values.astype(np.float64)
 
 
