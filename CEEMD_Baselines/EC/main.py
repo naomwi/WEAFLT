@@ -99,7 +99,7 @@ def train_single_imf(idx, comp, model_type, seq_len, horizon, device, train_conf
     return idx, preds_reshaped, actuals_reshaped
 
 
-def run_experiment(model_type, horizon, data, device, verbose=True, max_workers=4):
+def run_experiment(model_type, horizon, data, device, verbose=True):
     if verbose:
         print(f"\n{'='*50}")
         print(f"CEEMD + {model_type.upper()} | Horizon {horizon}")
@@ -116,34 +116,27 @@ def run_experiment(model_type, horizon, data, device, verbose=True, max_workers=
     )
     imfs, residue = result['imfs'], result['residue']
 
-    # Train per-IMF models in PARALLEL
+    # Train per-IMF models SEQUENTIALLY (ThreadPoolExecutor has issues with CUDA)
     components = list(imfs) + [residue]
-    results = [None] * len(components)
-    print_lock = threading.Lock()
+    all_preds = []
+    all_actuals = []
 
     if verbose:
-        print(f"\nTraining {len(components)} IMF models in parallel (max_workers={max_workers})...")
+        print(f"\nTraining {len(components)} IMF models...")
 
     start_time = time.time()
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {
-            executor.submit(
-                train_single_imf, i, comp, model_type, seq_len, horizon, device, TRAIN_CONFIG, print_lock, verbose
-            ): i
-            for i, comp in enumerate(components)
-        }
-
-        for future in as_completed(futures):
-            idx, preds, actuals = future.result()
-            results[idx] = (preds, actuals)
+    for i, comp in enumerate(components):
+        name = f"IMF_{i+1}" if i < len(imfs) else "Residue"
+        idx, preds, actuals = train_single_imf(
+            i, comp, model_type, seq_len, horizon, device, TRAIN_CONFIG, None, verbose
+        )
+        all_preds.append(preds)
+        all_actuals.append(actuals)
 
     elapsed = time.time() - start_time
     if verbose:
         print(f"  All models trained in {elapsed:.1f}s")
-
-    all_preds = [r[0] for r in results]
-    all_actuals = [r[1] for r in results]
 
     # Sum all components
     final_pred = np.array(all_preds).sum(axis=0)[:, -1]
