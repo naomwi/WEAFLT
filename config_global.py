@@ -150,16 +150,9 @@ TRAIN_CONFIG = {
 LOSS_CONFIG = {
     'mse': {},
     'event_weighted': {
-        'event_weight': 4.0,  # Upweight outliers/events (increased to 4.0)
-    },
-    'adaptive': {
-        'alpha': 1.0,         # Scaling factor: weight = 1 + alpha * (|Δx| / mean(|Δx|))
-        'max_weight': 10.0,   # Cap maximum weight to prevent instability
+        'event_weight': 4.0,  # Upweight outliers/events
     },
 }
-
-# Active loss type for Proposed Model ('event_weighted' or 'adaptive')
-ACTIVE_LOSS_TYPE = 'adaptive'  # Switch to adaptive for better outlier detection
 
 # =============================================================================
 # EXPERIMENTS SUMMARY
@@ -170,14 +163,14 @@ EXPERIMENTS = {
         'decomposition': 'ceemdan',
         'model': 'dlinear',
         'features': 'change_aware',
-        'loss': ACTIVE_LOSS_TYPE,  # 'adaptive' or 'event_weighted'
+        'loss': 'event_weighted',
     },
     'proposed_nlinear': {
         'folder': 'Proposed_Model',
         'decomposition': 'ceemdan',
         'model': 'nlinear',
         'features': 'change_aware',
-        'loss': ACTIVE_LOSS_TYPE,  # 'adaptive' or 'event_weighted'
+        'loss': 'event_weighted',
     },
     'ceemd_dlinear': {
         'folder': 'CEEMD_Baselines',

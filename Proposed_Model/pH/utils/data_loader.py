@@ -54,7 +54,6 @@ class IMFDataset(Dataset):
 
     Input: [IMF_value, Δx, |Δx|, rolling_std, rolling_zscore] (5 features)
     Event flags are provided separately for EventWeightedLoss.
-    Abs_delta (|Δx|) is provided separately for AdaptiveWeightedLoss.
     """
 
     def __init__(
@@ -122,10 +121,6 @@ class IMFDataset(Dataset):
         self.data_y = imf_scaled[border1s[idx]:border2s[idx]]  # Target is just IMF
         self.event_flags = event_flags[border1s[idx]:border2s[idx]]
 
-        # Store |Δx| for AdaptiveWeightedLoss (column 1 of features = Abs_Delta_X)
-        # Note: This is from the ORIGINAL signal, not scaled
-        self.abs_delta = features[border1s[idx]:border2s[idx], 1]  # |Δx| column
-
     def __len__(self):
         return len(self.data_x) - self.seq_len - self.pred_len + 1
 
@@ -138,13 +133,11 @@ class IMFDataset(Dataset):
         seq_x = self.data_x[s_begin:s_end]
         seq_y = self.data_y[r_begin:r_end]
         seq_event = self.event_flags[r_begin:r_end]
-        seq_abs_delta = self.abs_delta[r_begin:r_end]  # |Δx| for prediction window
 
         return (
             torch.tensor(seq_x, dtype=torch.float32),
             torch.tensor(seq_y, dtype=torch.float32),
-            torch.tensor(seq_event, dtype=torch.float32),
-            torch.tensor(seq_abs_delta, dtype=torch.float32)
+            torch.tensor(seq_event, dtype=torch.float32)
         )
 
     def inverse_transform(self, data: np.ndarray) -> np.ndarray:
@@ -209,8 +202,7 @@ if __name__ == "__main__":
     print(f"Test batches: {len(test_loader)}")
 
     # Check batch
-    x, y, e, abs_d = next(iter(train_loader))
+    x, y, e = next(iter(train_loader))
     print(f"Input shape: {x.shape}")       # (batch, seq_len, 5)
     print(f"Target shape: {y.shape}")      # (batch, pred_len, 1)
     print(f"Event shape: {e.shape}")       # (batch, pred_len)
-    print(f"Abs_delta shape: {abs_d.shape}") # (batch, pred_len)

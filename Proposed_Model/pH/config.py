@@ -28,7 +28,6 @@ from config_global import (
     MODEL_CONFIG as GLOBAL_MODEL_CONFIG,
     TRAIN_CONFIG as GLOBAL_TRAIN_CONFIG,
     LOSS_CONFIG as GLOBAL_LOSS_CONFIG,
-    ACTIVE_LOSS_TYPE,
     HORIZONS,
     get_batch_size,
 )
@@ -76,15 +75,7 @@ MODEL_CONFIG = {
 # =============================================================================
 # LOSS CONFIGURATION
 # =============================================================================
-# Use active loss type from global config ('event_weighted' or 'adaptive')
-LOSS_TYPE = ACTIVE_LOSS_TYPE
-
-if LOSS_TYPE == 'adaptive':
-    LOSS_CONFIG = GLOBAL_LOSS_CONFIG['adaptive'].copy()
-    LOSS_CONFIG['type'] = 'adaptive'
-else:
-    LOSS_CONFIG = GLOBAL_LOSS_CONFIG['event_weighted'].copy()
-    LOSS_CONFIG['type'] = 'event_weighted'
+LOSS_CONFIG = GLOBAL_LOSS_CONFIG['event_weighted'].copy()
 
 # =============================================================================
 # TRAINING CONFIGURATION - RTX 3090 Optimized
@@ -120,11 +111,7 @@ def get_config_summary():
     print(f"Decomposition: CEEMDAN")
     print(f"Input Features: {FEATURE_NAMES} ({INPUT_DIM} features)")
 
-    # Print loss config based on type
-    if LOSS_CONFIG['type'] == 'adaptive':
-        print(f"Loss: {LOSS_CONFIG['type']} (alpha={LOSS_CONFIG['alpha']}, max_weight={LOSS_CONFIG['max_weight']})")
-    else:
-        print(f"Loss: {LOSS_CONFIG['type']} (weight={LOSS_CONFIG['event_weight']})")
+    print(f"Loss: EventWeighted (weight={LOSS_CONFIG['event_weight']})")
 
     print(f"Epochs: {TRAIN_CONFIG['epochs']}")
     print(f"AMP: {TRAIN_CONFIG['use_amp']}")
