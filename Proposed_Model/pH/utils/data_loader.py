@@ -38,11 +38,10 @@ def load_raw_data(data_path: str, target_col: str, site_no: int = 1463500) -> Tu
         df['date'] = pd.to_datetime(df['date'])
 
     df = df.sort_values('date').reset_index(drop=True)
-    # Handle missing values - compatible with older pandas versions
-    try:
-        df = df.infer_objects(copy=False).interpolate(method='linear').bfill().ffill()
-    except TypeError:
-        df = df.infer_objects().interpolate(method='linear').bfill().ffill()
+
+    # Handle missing values - only interpolate numeric columns
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    df[numeric_cols] = df[numeric_cols].interpolate(method='linear').bfill().ffill()
 
     target = df[target_col].values.astype(np.float64)
 
