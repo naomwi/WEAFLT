@@ -19,7 +19,11 @@ from utils import get_or_create_imfs, create_dataloaders, calculate_all_metrics,
 from utils.data_loader import load_raw_data
 
 
-def train_model(model, train_loader, val_loader, device, epochs=50, lr=0.001, patience=10):
+def train_model(model, train_loader, val_loader, device, epochs=50, lr=0.001, learning_rate=None, patience=10, early_stopping_patience=None, **kwargs):
+    # Handle both 'lr' and 'learning_rate' parameter names
+    lr = learning_rate if learning_rate is not None else lr
+    patience = early_stopping_patience if early_stopping_patience is not None else patience
+
     model = model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     criterion = torch.nn.MSELoss()
