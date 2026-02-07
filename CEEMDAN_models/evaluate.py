@@ -133,13 +133,13 @@ def evaluate_full_prediction(
         preds = np.concatenate(preds, axis=0)
         trues = np.concatenate(trues, axis=0)
 
-        # Chỉ lấy điểm đầu tiên của mỗi prediction window (không lấy cả pred_len điểm)
-        preds_first = preds[:, 0, 0]  # Shape: (n_samples,)
-        trues_first = trues[:, 0, 0]  # Shape: (n_samples,)
+        # Lấy điểm cuối của mỗi prediction window (giống Baselines_model: [:, -1])
+        preds_last = preds[:, -1, 0]  # Shape: (n_samples,)
+        trues_last = trues[:, -1, 0]  # Shape: (n_samples,)
 
         # Inverse scale
-        preds_flat = data_manager.inverse_scale(preds_first, component_name)
-        trues_flat = data_manager.inverse_scale(trues_first, component_name)
+        preds_flat = data_manager.inverse_scale(preds_last, component_name)
+        trues_flat = data_manager.inverse_scale(trues_last, component_name)
 
         all_component_preds.append(preds_flat)
         all_component_trues.append(trues_flat)
@@ -169,12 +169,12 @@ def evaluate_full_prediction(
         preds = np.concatenate(preds, axis=0)
         trues = np.concatenate(trues, axis=0)
 
-        # Chỉ lấy điểm đầu tiên của mỗi prediction window
-        preds_first = preds[:, 0, 0]
-        trues_first = trues[:, 0, 0]
+        # Lấy điểm cuối của mỗi prediction window (giống Baselines_model)
+        preds_last = preds[:, -1, 0]
+        trues_last = trues[:, -1, 0]
 
-        preds_flat = data_manager.inverse_scale(preds_first, component_name)
-        trues_flat = data_manager.inverse_scale(trues_first, component_name)
+        preds_flat = data_manager.inverse_scale(preds_last, component_name)
+        trues_flat = data_manager.inverse_scale(trues_last, component_name)
 
         residue_pred = preds_flat
         residue_true = trues_flat
