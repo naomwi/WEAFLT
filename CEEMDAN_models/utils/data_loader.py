@@ -56,9 +56,9 @@ class IMFDataset(Dataset):
         self.seq_len = seq_len
         self.pred_len = pred_len
 
-        # Split ratios matching Baselines_model: 70% train, 10% val, 20% test
-        n_train = int(len(data) * 0.7)
-        n_test = int(len(data) * 0.2)
+        # Split ratios: 60% train, 20% val, 20% test (standard split)
+        n_train = int(len(data) * DATA_CONFIG['train_ratio'])
+        n_test = int(len(data) * DATA_CONFIG['test_ratio'])
         n_val = len(data) - n_train - n_test
 
         # Border indices (same as Baselines_model)
