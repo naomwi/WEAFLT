@@ -15,7 +15,8 @@ from config import (
     CEEMDAN_CONFIG, DATA_CONFIG, MODEL_DIR, RESULTS_DIR,
     HORIZONS, AVAILABLE_MODELS
 )
-from utils.data_loader import IMFDataManager, load_raw_data, get_target_data, prepare_data_splits
+from utils.data_loader import IMFDataManager, IMFDataset, load_raw_data, get_target_data, prepare_data_splits
+from torch.utils.data import DataLoader
 from utils.ceemdan_decomposition import load_imfs, reconstruct_from_predictions
 from utils.metrics import calculate_all_metrics, print_metrics
 from train import create_model, get_device
@@ -101,7 +102,7 @@ def evaluate_full_prediction(
     all_component_preds = []
     all_component_trues = []
 
-    # Evaluate each IMF
+    # Evaluate each IMF using IMFDataset (same as Baselines_model)
     for i in range(n_imfs):
         component_name = f'imf_{i+1}'
 
@@ -112,11 +113,9 @@ def evaluate_full_prediction(
         model = models[component_name]
         component_data = imf_data['imfs'][i]
 
-        # Create data manager and test loader
-        data_manager = IMFDataManager()
-        _, _, test_loader = data_manager.create_dataloaders(
-            component_data, component_name, seq_len, pred_len, batch_size
-        )
+        # Create test dataset using IMFDataset (same split logic as Baselines_model)
+        test_set = IMFDataset(component_data, seq_len, pred_len, flag='test')
+        test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False)
 
         # Get predictions
         model.eval()
@@ -137,9 +136,9 @@ def evaluate_full_prediction(
         preds_last = preds[:, -1, 0]  # Shape: (n_samples,)
         trues_last = trues[:, -1, 0]  # Shape: (n_samples,)
 
-        # Inverse scale
-        preds_flat = data_manager.inverse_scale(preds_last, component_name)
-        trues_flat = data_manager.inverse_scale(trues_last, component_name)
+        # Inverse scale using test_set's scaler
+        preds_flat = test_set.inverse(preds_last.reshape(-1, 1)).flatten()
+        trues_flat = test_set.inverse(trues_last.reshape(-1, 1)).flatten()
 
         all_component_preds.append(preds_flat)
         all_component_trues.append(trues_flat)
@@ -150,10 +149,9 @@ def evaluate_full_prediction(
         model = models[component_name]
         component_data = imf_data['residue']
 
-        data_manager = IMFDataManager()
-        _, _, test_loader = data_manager.create_dataloaders(
-            component_data, component_name, seq_len, pred_len, batch_size
-        )
+        # Create test dataset using IMFDataset
+        test_set = IMFDataset(component_data, seq_len, pred_len, flag='test')
+        test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False)
 
         model.eval()
         preds = []
@@ -173,8 +171,9 @@ def evaluate_full_prediction(
         preds_last = preds[:, -1, 0]
         trues_last = trues[:, -1, 0]
 
-        preds_flat = data_manager.inverse_scale(preds_last, component_name)
-        trues_flat = data_manager.inverse_scale(trues_last, component_name)
+        # Inverse scale using test_set's scaler
+        preds_flat = test_set.inverse(preds_last.reshape(-1, 1)).flatten()
+        trues_flat = test_set.inverse(trues_last.reshape(-1, 1)).flatten()
 
         residue_pred = preds_flat
         residue_true = trues_flat
