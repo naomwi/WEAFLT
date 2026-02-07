@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nRefactor decomposition methods and add Per-IMF training\n\n- Baselines: Changed from CEEMDAN to CEEMD \\(EEMD\\) for base approach\n- Features: Added Per-IMF training with rolling features\n- EventLoss: Added Per-IMF training with event-weighted loss\n- Full Model: Changed from CEEMD to CEEMDAN for advanced approach\n\nKey changes:\n- Baselines_model/src/decomposition.py: Now uses PyEMD.EEMD\n- ceemdan_features_model/main.py: Complete rewrite with IMFFeatureDataset\n- ceemdan_EVloss/main.py: Complete rewrite with IMFEventDataset\n- Full_model/src/Data/Data_processor.py: Now uses PyEMD.CEEMDAN\n- All models now use Per-IMF training \\(train separate model per IMF\\)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git push:*)",
+      "Bash(git checkout:*)",
+      "Bash(git merge:*)",
+      "Bash(git commit:*)",
+      "Bash(tree:*)",
+      "Bash(python:*)",
+      "Bash(git fetch:*)",
+      "Bash(git pull:*)",
+      "Bash(find:*)",
+      "Bash(__NEW_LINE_4b539d41a34b933b__ echo \"\")",
+      "Bash(__NEW_LINE_6789b6f264b96d74__ echo \"\")",
+      "Bash(__NEW_LINE_fe0fb87896325a0b__ echo \"\")",
+      "Bash(pip show:*)",
+      "Bash(pip uninstall:*)",
+      "Bash(pip install:*)"
+    ]
+  }
+}

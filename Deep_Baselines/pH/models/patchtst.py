@@ -32,6 +32,7 @@ class PatchTST(nn.Module):
         d_model: int = 128,
         nhead: int = 8,
         num_layers: int = 3,
+        d_ff: int = None,
         dropout: float = 0.1
     ):
         super().__init__()
@@ -39,12 +40,15 @@ class PatchTST(nn.Module):
         self.output_dim = output_dim
         self.num_patches = (seq_len - patch_len) // stride + 1
 
+        # d_ff defaults to 4x d_model if not specified
+        dim_feedforward = d_ff if d_ff is not None else d_model * 4
+
         self.patch_embedding = PatchEmbedding(input_dim, patch_len, stride, d_model)
         self.pos_embed = nn.Parameter(torch.randn(1, self.num_patches + 10, d_model) * 0.02)
         self.dropout = nn.Dropout(dropout)
 
         encoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model, nhead=nhead, dim_feedforward=d_model*4,
+            d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward,
             dropout=dropout, batch_first=True
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)

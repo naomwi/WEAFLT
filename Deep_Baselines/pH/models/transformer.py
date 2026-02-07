@@ -32,17 +32,21 @@ class TransformerModel(nn.Module):
         d_model: int = 128,
         nhead: int = 8,
         num_layers: int = 2,
+        d_ff: int = None,
         dropout: float = 0.1
     ):
         super().__init__()
         self.seq_len = seq_len
         self.pred_len = pred_len
 
+        # d_ff defaults to 4x d_model if not specified
+        dim_feedforward = d_ff if d_ff is not None else d_model * 4
+
         self.input_projection = nn.Linear(input_dim, d_model)
         self.pos_encoder = PositionalEncoding(d_model, max_len=seq_len, dropout=dropout)
 
         encoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model, nhead=nhead, dim_feedforward=d_model*4,
+            d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward,
             dropout=dropout, batch_first=True
         )
         self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
