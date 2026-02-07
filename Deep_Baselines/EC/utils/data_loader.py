@@ -11,14 +11,28 @@ from sklearn.preprocessing import StandardScaler
 from typing import Tuple
 
 
-def load_raw_data(data_path: str, target_col: str):
+def load_raw_data(data_path: str, target_col: str, site_no: int = 1463500):
+    """
+    Load raw data from CSV file and filter by station.
+
+    Args:
+        data_path: Path to CSV file
+        target_col: Target column name
+        site_no: USGS site number (default: 1463500, same as CEEMDAN_models)
+    """
     df = pd.read_csv(data_path)
+
+    # Filter by site_no (same as CEEMDAN_models)
+    if 'site_no' in df.columns and site_no is not None:
+        df = df[df['site_no'] == site_no]
+        print(f"Filtered to site_no={site_no}: {len(df)} samples")
+
     if 'Time' in df.columns:
         df['date'] = pd.to_datetime(df['Time'])
     elif 'date' in df.columns:
         df['date'] = pd.to_datetime(df['date'])
     df = df.sort_values('date').reset_index(drop=True)
-    df = df.interpolate(method='linear').bfill().ffill()
+    df = df.infer_objects(copy=False).interpolate(method='linear').bfill().ffill()
     return df, df[target_col].values.astype(np.float64)
 
 

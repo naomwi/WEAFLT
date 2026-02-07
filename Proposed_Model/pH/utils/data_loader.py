@@ -12,9 +12,24 @@ from pathlib import Path
 from typing import Tuple, Dict, Optional, List
 
 
-def load_raw_data(data_path: str, target_col: str) -> Tuple[pd.DataFrame, np.ndarray]:
-    """Load raw data from CSV file."""
+def load_raw_data(data_path: str, target_col: str, site_no: int = 1463500) -> Tuple[pd.DataFrame, np.ndarray]:
+    """
+    Load raw data from CSV file and filter by station.
+
+    Args:
+        data_path: Path to CSV file
+        target_col: Target column name (e.g., 'EC', 'pH')
+        site_no: USGS site number to filter (default: 1463500, same as CEEMDAN_models)
+
+    Returns:
+        Tuple of (DataFrame, target array)
+    """
     df = pd.read_csv(data_path)
+
+    # Filter by site_no (same as CEEMDAN_models)
+    if 'site_no' in df.columns and site_no is not None:
+        df = df[df['site_no'] == site_no]
+        print(f"Filtered to site_no={site_no}: {len(df)} samples")
 
     # Handle date column
     if 'Time' in df.columns:
@@ -23,7 +38,7 @@ def load_raw_data(data_path: str, target_col: str) -> Tuple[pd.DataFrame, np.nda
         df['date'] = pd.to_datetime(df['date'])
 
     df = df.sort_values('date').reset_index(drop=True)
-    df = df.interpolate(method='linear').bfill().ffill()
+    df = df.infer_objects(copy=False).interpolate(method='linear').bfill().ffill()
 
     target = df[target_col].values.astype(np.float64)
 
