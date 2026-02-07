@@ -327,5 +327,142 @@ def train_all_imf_models_parallel(
     return all_models, all_scalers
 
 
+def train_aggregator(
+    aggregator: nn.Module,
+    imf_models: List[nn.Module],
+    train_loader: DataLoader,
+    val_loader: DataLoader,
+    scalers: List,
+    device: torch.device,
+    epochs: int = 20,
+    learning_rate: float = 0.001,
+    early_stopping_patience: int = 5,
+    verbose: bool = True
+) -> Dict:
+    """
+    Train the IMF aggregator to learn optimal attention weights.
+
+    The aggregator is trained end-to-end while keeping IMF models frozen.
+
+    Args:
+        aggregator: IMFAggregator model
+        imf_models: List of trained per-IMF models (will be frozen)
+        train_loader: Training data loader (for original signal)
+        val_loader: Validation data loader
+        scalers: List of (imf_scaler, feat_scaler) for each IMF
+        device: torch device
+        epochs: Number of training epochs
+        learning_rate: Learning rate for aggregator
+        early_stopping_patience: Early stopping patience
+        verbose: Print progress
+
+    Returns:
+        Dict with training history
+    """
+    # Freeze IMF models
+    for model in imf_models:
+        model.eval()
+        for param in model.parameters():
+            param.requires_grad = False
+
+    aggregator = aggregator.to(device)
+    optimizer = torch.optim.Adam(aggregator.parameters(), lr=learning_rate)
+    criterion = nn.MSELoss()
+
+    history = {
+        'train_loss': [],
+        'val_loss': [],
+        'best_epoch': 0,
+        'best_val_loss': float('inf'),
+    }
+
+    best_val_loss = float('inf')
+    patience_counter = 0
+    best_state = None
+
+    if verbose:
+        print(f"\nTraining aggregator...")
+
+    start_time = time.time()
+
+    for epoch in range(epochs):
+        # Training
+        aggregator.train()
+        train_loss = 0.0
+        n_batches = 0
+
+        for batch in train_loader:
+            x, y, _ = batch
+            x = x.to(device)
+            y = y.to(device)
+
+            # Get predictions from all IMF models
+            imf_preds = []
+            with torch.no_grad():
+                for model in imf_models:
+                    pred = model(x)  # (batch, pred_len, 1)
+                    imf_preds.append(pred)
+
+            # Aggregate
+            optimizer.zero_grad()
+            final_pred = aggregator(imf_preds)
+            loss = criterion(final_pred, y.unsqueeze(-1))
+            loss.backward()
+            optimizer.step()
+
+            train_loss += loss.item()
+            n_batches += 1
+
+        train_loss /= max(n_batches, 1)
+        history['train_loss'].append(train_loss)
+
+        # Validation
+        aggregator.eval()
+        val_loss = 0.0
+        n_batches = 0
+
+        with torch.no_grad():
+            for batch in val_loader:
+                x, y, _ = batch
+                x = x.to(device)
+                y = y.to(device)
+
+                imf_preds = []
+                for model in imf_models:
+                    pred = model(x)
+                    imf_preds.append(pred)
+
+                final_pred = aggregator(imf_preds)
+                loss = criterion(final_pred, y.unsqueeze(-1))
+                val_loss += loss.item()
+                n_batches += 1
+
+        val_loss /= max(n_batches, 1)
+        history['val_loss'].append(val_loss)
+
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            patience_counter = 0
+            history['best_epoch'] = epoch
+            history['best_val_loss'] = val_loss
+            best_state = {k: v.cpu().clone() for k, v in aggregator.state_dict().items()}
+        else:
+            patience_counter += 1
+
+        if patience_counter >= early_stopping_patience:
+            if verbose:
+                print(f"    Early stopping at epoch {epoch+1}")
+            break
+
+    if best_state is not None:
+        aggregator.load_state_dict(best_state)
+
+    elapsed = time.time() - start_time
+    if verbose:
+        print(f"    Aggregator trained in {elapsed:.1f}s, best_val={best_val_loss:.6f}")
+
+    return history
+
+
 if __name__ == "__main__":
     print("Testing training module...")

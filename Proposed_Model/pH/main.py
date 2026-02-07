@@ -1,6 +1,6 @@
 """
 Main Entry Point for Proposed Model: CA-CEEMDAN-LTSF
-Target: EC (Electrical Conductivity)
+Target: pH
 """
 
 import argparse
@@ -191,10 +191,21 @@ def run_experiment(
     all_preds = np.array(all_preds)
     all_actuals = np.array(all_actuals)
 
-    # Sum for final prediction (or use aggregator for weighted sum)
-    # For now, simple sum
+    # Aggregation: Simple sum (IMFs + Residue should reconstruct original signal)
+    # Note: For attention-based aggregation, train the aggregator separately
     final_pred = all_preds.sum(axis=0)
     final_actual = all_actuals.sum(axis=0)
+
+    # Log IMF contribution (energy-based)
+    if verbose:
+        n_components = len(components)
+        energies = [np.var(all_preds[i]) for i in range(n_components)]
+        total_energy = sum(energies)
+        print(f"\n  IMF Energy Contribution:")
+        for i, e in enumerate(energies):
+            name = f"IMF_{i+1}" if i < 12 else "Residue"
+            contribution = e / total_energy * 100 if total_energy > 0 else 0
+            print(f"    {name}: {contribution:.2f}%")
 
     # Use last point for metrics
     pred_last = final_pred[:, -1]

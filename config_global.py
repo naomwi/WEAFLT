@@ -150,7 +150,7 @@ TRAIN_CONFIG = {
 LOSS_CONFIG = {
     'mse': {},
     'event_weighted': {
-        'event_weight': 3.0,
+        'event_weight': 0.5,  # Changed from 3.0
     },
 }
 
