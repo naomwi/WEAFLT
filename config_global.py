@@ -170,14 +170,14 @@ EXPERIMENTS = {
         'decomposition': 'ceemdan',
         'model': 'dlinear',
         'features': 'change_aware',
-        'loss': 'event_weighted',
+        'loss': ACTIVE_LOSS_TYPE,  # 'adaptive' or 'event_weighted'
     },
     'proposed_nlinear': {
         'folder': 'Proposed_Model',
         'decomposition': 'ceemdan',
         'model': 'nlinear',
         'features': 'change_aware',
-        'loss': 'event_weighted',
+        'loss': ACTIVE_LOSS_TYPE,  # 'adaptive' or 'event_weighted'
     },
     'ceemd_dlinear': {
         'folder': 'CEEMD_Baselines',
