@@ -206,7 +206,6 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-__init__.py
 .vscode/
 datasets/
 output/model/
