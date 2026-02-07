@@ -19,7 +19,7 @@ from config import (
     DECOMPOSITION_CONFIG, HORIZONS, EXPERIMENTS, RESULTS_DIR, MODEL_DIR,
     CEEMDAN_CACHE_DIR, CACHE_DIR, get_config_summary
 )
-from train import train_all_imf_models
+from train import train_all_imf_models, train_all_imf_models_parallel
 from models import DLinear, NLinear, IMFAggregator
 from utils.decomposition import get_or_create_imfs
 from utils.data_loader import load_raw_data, create_dataloaders
@@ -122,7 +122,9 @@ def run_experiment(
     }
 
     save_dir = MODEL_DIR / model_type
-    models, scalers = train_all_imf_models(
+
+    # Use parallel training for faster GPU utilization
+    models, scalers = train_all_imf_models_parallel(
         imfs, residue, features, event_flags,
         model_type=model_type,
         seq_len=seq_len,
@@ -130,6 +132,7 @@ def run_experiment(
         device=device,
         config=train_config,
         save_dir=save_dir,
+        max_workers=4,  # Train 4 IMF models in parallel
         verbose=verbose
     )
 

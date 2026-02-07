@@ -10,6 +10,8 @@ import pandas as pd
 from pathlib import Path
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -63,7 +65,41 @@ def train_model(model, train_loader, val_loader, device, epochs=50, lr=0.001, le
     return model, best_val
 
 
-def run_experiment(model_type, horizon, data, device, verbose=True):
+def train_single_imf(idx, comp, model_type, seq_len, horizon, device, train_config, print_lock=None, verbose=True):
+    """Train a single IMF model (for parallel execution)."""
+    train_ld, val_ld, test_ld, scaler = create_dataloaders(comp, seq_len, horizon)
+
+    if model_type == 'dlinear':
+        model = DLinear(seq_len, horizon)
+    else:
+        model = NLinear(seq_len, horizon)
+
+    model, val_loss = train_model(model, train_ld, val_ld, device, **train_config)
+
+    # Evaluate
+    model.eval()
+    preds, actuals = [], []
+    with torch.no_grad():
+        for x, y in test_ld:
+            preds.append(model(x.to(device)).cpu().numpy())
+            actuals.append(y.numpy())
+
+    preds = scaler.inverse_transform(np.concatenate(preds).reshape(-1, 1)).flatten()
+    actuals = scaler.inverse_transform(np.concatenate(actuals).reshape(-1, 1)).flatten()
+
+    n_samples = len(preds) // horizon
+    preds_reshaped = preds.reshape(n_samples, horizon)
+    actuals_reshaped = actuals.reshape(n_samples, horizon)
+
+    if verbose and print_lock:
+        with print_lock:
+            name = f"IMF_{idx+1}" if idx < 12 else "Residue"
+            print(f"  {name}: val_loss={val_loss:.6f}")
+
+    return idx, preds_reshaped, actuals_reshaped
+
+
+def run_experiment(model_type, horizon, data, device, verbose=True, max_workers=4):
     if verbose:
         print(f"\n{'='*50}")
         print(f"CEEMD + {model_type.upper()} | Horizon {horizon}")
@@ -80,34 +116,34 @@ def run_experiment(model_type, horizon, data, device, verbose=True):
     )
     imfs, residue = result['imfs'], result['residue']
 
-    # Train per-IMF models
+    # Train per-IMF models in PARALLEL
     components = list(imfs) + [residue]
-    all_preds, all_actuals = [], []
+    results = [None] * len(components)
+    print_lock = threading.Lock()
 
-    for i, comp in enumerate(components):
-        train_ld, val_ld, test_ld, scaler = create_dataloaders(comp, seq_len, horizon)
+    if verbose:
+        print(f"\nTraining {len(components)} IMF models in parallel (max_workers={max_workers})...")
 
-        if model_type == 'dlinear':
-            model = DLinear(seq_len, horizon)
-        else:
-            model = NLinear(seq_len, horizon)
+    start_time = time.time()
 
-        model, _ = train_model(model, train_ld, val_ld, device, **TRAIN_CONFIG)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(
+                train_single_imf, i, comp, model_type, seq_len, horizon, device, TRAIN_CONFIG, print_lock, verbose
+            ): i
+            for i, comp in enumerate(components)
+        }
 
-        # Evaluate
-        model.eval()
-        preds, actuals = [], []
-        with torch.no_grad():
-            for x, y in test_ld:
-                preds.append(model(x.to(device)).cpu().numpy())
-                actuals.append(y.numpy())
+        for future in as_completed(futures):
+            idx, preds, actuals = future.result()
+            results[idx] = (preds, actuals)
 
-        preds = scaler.inverse_transform(np.concatenate(preds).reshape(-1, 1)).flatten()
-        actuals = scaler.inverse_transform(np.concatenate(actuals).reshape(-1, 1)).flatten()
+    elapsed = time.time() - start_time
+    if verbose:
+        print(f"  All models trained in {elapsed:.1f}s")
 
-        n_samples = len(preds) // horizon
-        all_preds.append(preds.reshape(n_samples, horizon))
-        all_actuals.append(actuals.reshape(n_samples, horizon))
+    all_preds = [r[0] for r in results]
+    all_actuals = [r[1] for r in results]
 
     # Sum all components
     final_pred = np.array(all_preds).sum(axis=0)[:, -1]

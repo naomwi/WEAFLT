@@ -5,10 +5,12 @@ Training Module for Proposed Model: CA-CEEMDAN-LTSF
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Tuple
 import numpy as np
 from pathlib import Path
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 
 def train_epoch(
@@ -213,6 +215,114 @@ def train_all_imf_models(
 
         all_models.append(model)
         all_scalers.append((imf_scaler, feat_scaler))
+
+    return all_models, all_scalers
+
+
+def train_all_imf_models_parallel(
+    imfs: np.ndarray,
+    residue: np.ndarray,
+    features: np.ndarray,
+    event_flags: np.ndarray,
+    model_type: str,
+    seq_len: int,
+    pred_len: int,
+    device: torch.device,
+    config: dict,
+    save_dir: Path,
+    max_workers: int = 4,
+    verbose: bool = True
+) -> Tuple[List[nn.Module], List]:
+    """
+    Train models for all IMFs + residue in PARALLEL.
+
+    Uses ThreadPoolExecutor to train multiple IMF models simultaneously,
+    improving GPU utilization for lightweight models like DLinear/NLinear.
+
+    Args:
+        max_workers: Number of parallel training jobs (default: 4)
+
+    Returns:
+        Tuple of (list of trained models, list of scalers)
+    """
+    from models import DLinear, NLinear
+    from utils.data_loader import create_dataloaders
+    from utils.losses import EventWeightedLoss
+
+    n_imfs = len(imfs)
+    components = list(imfs) + [residue]
+    names = [f"IMF_{i+1}" for i in range(n_imfs)] + ["Residue"]
+
+    # Thread-safe storage for results
+    results = [None] * len(components)
+    print_lock = threading.Lock()
+
+    def train_single_imf(idx: int, component: np.ndarray, name: str):
+        """Train a single IMF model."""
+        # Create dataloaders
+        train_loader, val_loader, test_loader, imf_scaler, feat_scaler = create_dataloaders(
+            component, features, event_flags,
+            seq_len=seq_len, pred_len=pred_len,
+            batch_size=config.get('batch_size', 64)
+        )
+
+        # Create model
+        if model_type == 'dlinear':
+            model = DLinear(seq_len=seq_len, pred_len=pred_len, input_dim=5, output_dim=1)
+        else:
+            model = NLinear(seq_len=seq_len, pred_len=pred_len, input_dim=5, output_dim=1)
+
+        # Loss function (create per-thread to avoid issues)
+        criterion = EventWeightedLoss(event_weight=config.get('event_weight', 3.0))
+
+        # Train
+        save_path = save_dir / f"h{pred_len}" / f"{name.lower()}.pt"
+        history = train_model(
+            model=model,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            criterion=criterion,
+            device=device,
+            epochs=config.get('epochs', 50),
+            learning_rate=config.get('learning_rate', 0.001),
+            weight_decay=config.get('weight_decay', 1e-5),
+            early_stopping_patience=config.get('early_stopping_patience', 10),
+            verbose=False,
+            save_path=save_path
+        )
+
+        if verbose:
+            with print_lock:
+                print(f"  {name}: val_loss={history['best_val_loss']:.6f}")
+
+        return idx, model, (imf_scaler, feat_scaler), history
+
+    if verbose:
+        print(f"\nTraining {len(components)} IMF models in parallel (max_workers={max_workers})...")
+
+    start_time = time.time()
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(train_single_imf, i, comp, name): i
+            for i, (comp, name) in enumerate(zip(components, names))
+        }
+
+        for future in as_completed(futures):
+            try:
+                idx, model, scalers, history = future.result()
+                results[idx] = (model, scalers)
+            except Exception as e:
+                idx = futures[future]
+                print(f"  Error training {names[idx]}: {e}")
+                raise
+
+    elapsed = time.time() - start_time
+    if verbose:
+        print(f"  All models trained in {elapsed:.1f}s")
+
+    all_models = [r[0] for r in results]
+    all_scalers = [r[1] for r in results]
 
     return all_models, all_scalers
 
