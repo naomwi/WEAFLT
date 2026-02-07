@@ -23,8 +23,8 @@ CEEMDAN_CONFIG = {
 DATA_CONFIG = {
     'target_col': 'EC',     # Electrical Conductivity
     'train_ratio': 0.7,
-    'val_ratio': 0.15,
-    'test_ratio': 0.15,
+    'val_ratio': 0.10,   # Match Baselines_model (was 0.15)
+    'test_ratio': 0.20,  # Match Baselines_model (was 0.15)
     'seq_len': 168,         # Input sequence length (7 days * 24 hours)
     'batch_size': 64,
     'max_samples': 50000,   # Limit data size for CEEMDAN (None = use all)
