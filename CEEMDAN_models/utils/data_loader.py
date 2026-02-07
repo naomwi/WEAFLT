@@ -39,6 +39,65 @@ class TimeSeriesDataset(Dataset):
         return x.unsqueeze(-1), y.unsqueeze(-1)  # Add feature dimension
 
 
+class IMFDataset(Dataset):
+    """
+    IMF Dataset matching Baselines_model implementation.
+    Handles train/val/test splitting internally with proper borders.
+    """
+
+    def __init__(self, data: np.ndarray, seq_len: int, pred_len: int, flag: str = 'train'):
+        """
+        Args:
+            data: 1D numpy array of the full IMF time series
+            seq_len: Input sequence length
+            pred_len: Prediction horizon
+            flag: 'train', 'val', or 'test'
+        """
+        self.seq_len = seq_len
+        self.pred_len = pred_len
+
+        # Split ratios matching Baselines_model: 70% train, 10% val, 20% test
+        n_train = int(len(data) * 0.7)
+        n_test = int(len(data) * 0.2)
+        n_val = len(data) - n_train - n_test
+
+        # Border indices (same as Baselines_model)
+        border1s = [0, n_train - seq_len, len(data) - n_test - seq_len]
+        border2s = [n_train, n_train + n_val, len(data)]
+
+        type_map = {'train': 0, 'val': 1, 'test': 2}
+        idx = type_map[flag]
+
+        # Scaler fit on train data only
+        self.scaler = StandardScaler()
+        train_data = data[border1s[0]:border2s[0]].reshape(-1, 1)
+        self.scaler.fit(train_data)
+
+        # Transform entire data then slice
+        data_scaled = self.scaler.transform(data.reshape(-1, 1))
+
+        # Only store the portion for this flag
+        self.data_x = data_scaled[border1s[idx]:border2s[idx]]
+        self.data_y = data_scaled[border1s[idx]:border2s[idx]]
+
+    def __getitem__(self, index):
+        s_begin = index
+        s_end = s_begin + self.seq_len
+        r_begin = s_end
+        r_end = r_begin + self.pred_len
+
+        seq_x = self.data_x[s_begin:s_end]
+        seq_y = self.data_y[r_begin:r_end]
+        return torch.tensor(seq_x, dtype=torch.float32), torch.tensor(seq_y, dtype=torch.float32)
+
+    def __len__(self):
+        return len(self.data_x) - self.seq_len - self.pred_len + 1
+
+    def inverse(self, data):
+        """Inverse transform scaled data back to original scale."""
+        return self.scaler.inverse_transform(data)
+
+
 def load_raw_data(data_path: Optional[Path] = None, site_no: int = 1463500) -> pd.DataFrame:
     """
     Load raw data from CSV file and filter by site.
