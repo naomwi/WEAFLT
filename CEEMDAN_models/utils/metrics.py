@@ -58,6 +58,40 @@ def r2_score(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return 1 - (ss_res / ss_tot)
 
 
+def sudden_fluctuation_mae(y_true: np.ndarray, y_pred: np.ndarray, top_k_percent: float = 5.0) -> float:
+    """
+    Sudden-Fluctuation Score: MAE chỉ tính trên top-k% time steps có |Δx| lớn nhất.
+
+    Đo khả năng dự đoán tại các điểm có biến động đột ngột.
+    Model tốt phải dự đoán được cả những lúc data thay đổi nhanh.
+
+    Args:
+        y_true: Ground truth values (1D array)
+        y_pred: Predicted values (1D array)
+        top_k_percent: Phần trăm top fluctuations (default: 5%)
+
+    Returns:
+        MAE trên các time steps có biến động đột ngột
+    """
+    if len(y_true) < 2:
+        return 0.0
+
+    # Tính |Δx| = |x[t] - x[t-1]|
+    delta_x = np.abs(np.diff(y_true))  # Shape: (n-1,)
+
+    # Tìm threshold cho top k%
+    threshold = np.percentile(delta_x, 100 - top_k_percent)
+
+    # Indices của top k% fluctuations (offset +1 vì diff giảm 1 phần tử)
+    sudden_indices = np.where(delta_x >= threshold)[0] + 1
+
+    if len(sudden_indices) == 0:
+        return 0.0
+
+    # Tính MAE chỉ trên các sudden fluctuation points
+    return np.mean(np.abs(y_true[sudden_indices] - y_pred[sudden_indices]))
+
+
 def calculate_all_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]:
     """
     Calculate all standard metrics.
@@ -75,6 +109,7 @@ def calculate_all_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, f
         'MAPE': mape(y_true, y_pred),
         'R2': r2_score(y_true, y_pred),
         'MSE': mse(y_true, y_pred),
+        'MAE_Sudden': sudden_fluctuation_mae(y_true, y_pred, top_k_percent=5.0),
     }
 
 
@@ -83,10 +118,11 @@ def print_metrics(metrics: Dict[str, float], prefix: str = ""):
     if prefix:
         print(f"\n{prefix}")
     print("-" * 40)
-    print(f"  MAE:  {metrics['MAE']:.4f}")
-    print(f"  RMSE: {metrics['RMSE']:.4f}")
-    print(f"  MAPE: {metrics['MAPE']:.2f}%")
-    print(f"  R²:   {metrics['R2']:.4f}")
+    print(f"  MAE:        {metrics['MAE']:.4f}")
+    print(f"  RMSE:       {metrics['RMSE']:.4f}")
+    print(f"  MAPE:       {metrics['MAPE']:.2f}%")
+    print(f"  R²:         {metrics['R2']:.4f}")
+    print(f"  MAE_Sudden: {metrics.get('MAE_Sudden', 0):.4f}  (top 5% fluctuations)")
     print("-" * 40)
 
 
