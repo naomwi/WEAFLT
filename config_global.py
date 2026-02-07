@@ -152,7 +152,14 @@ LOSS_CONFIG = {
     'event_weighted': {
         'event_weight': 4.0,  # Upweight outliers/events (increased to 4.0)
     },
+    'adaptive': {
+        'alpha': 1.0,         # Scaling factor: weight = 1 + alpha * (|Δx| / mean(|Δx|))
+        'max_weight': 10.0,   # Cap maximum weight to prevent instability
+    },
 }
+
+# Active loss type for Proposed Model ('event_weighted' or 'adaptive')
+ACTIVE_LOSS_TYPE = 'adaptive'  # Switch to adaptive for better outlier detection
 
 # =============================================================================
 # EXPERIMENTS SUMMARY

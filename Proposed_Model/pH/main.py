@@ -15,7 +15,7 @@ import time
 sys.path.insert(0, str(Path(__file__).parent))
 
 from config import (
-    DATA_DIR, DATA_CONFIG, TRAIN_CONFIG, FEATURE_CONFIG, LOSS_CONFIG,
+    DATA_DIR, DATA_CONFIG, TRAIN_CONFIG, FEATURE_CONFIG, LOSS_CONFIG, LOSS_TYPE,
     DECOMPOSITION_CONFIG, HORIZONS, EXPERIMENTS, RESULTS_DIR, MODEL_DIR,
     CEEMDAN_CACHE_DIR, CACHE_DIR, get_config_summary
 )
@@ -91,14 +91,14 @@ def run_experiment(
     # Try to load from CEEMDAN_models cache first
     try:
         from utils.decomposition import load_cached_imfs
-        result = load_cached_imfs(CEEMDAN_CACHE_DIR, prefix="ec", n_imfs=n_imfs)
+        result = load_cached_imfs(CEEMDAN_CACHE_DIR, prefix="ph", n_imfs=n_imfs)
         imfs = result['imfs']
         residue = result['residue']
         if verbose:
             print(f"  Loaded {len(imfs)} IMFs from CEEMDAN_models cache")
     except FileNotFoundError:
         result = get_or_create_imfs(
-            data, CACHE_DIR, prefix="ec",
+            data, CACHE_DIR, prefix="ph",
             n_imfs=n_imfs,
             trials=DECOMPOSITION_CONFIG['trials'],
             epsilon=DECOMPOSITION_CONFIG['epsilon']
@@ -112,14 +112,26 @@ def run_experiment(
     if verbose:
         print(f"\nStep 4: Training {n_imfs + 1} models...")
 
+    # Build train config based on loss type
     train_config = {
         'epochs': TRAIN_CONFIG['epochs'],
         'learning_rate': TRAIN_CONFIG['learning_rate'],
         'weight_decay': TRAIN_CONFIG['weight_decay'],
         'early_stopping_patience': TRAIN_CONFIG['early_stopping_patience'],
-        'event_weight': LOSS_CONFIG['event_weight'],
         'batch_size': DATA_CONFIG['batch_size'],
+        'loss_type': LOSS_TYPE,  # 'adaptive' or 'event_weighted'
     }
+
+    # Add loss-specific parameters
+    if LOSS_TYPE == 'adaptive':
+        train_config['alpha'] = LOSS_CONFIG['alpha']
+        train_config['max_weight'] = LOSS_CONFIG['max_weight']
+        if verbose:
+            print(f"  Loss: AdaptiveWeightedLoss (alpha={LOSS_CONFIG['alpha']}, max_weight={LOSS_CONFIG['max_weight']})")
+    else:
+        train_config['event_weight'] = LOSS_CONFIG['event_weight']
+        if verbose:
+            print(f"  Loss: EventWeightedLoss (event_weight={LOSS_CONFIG['event_weight']})")
 
     save_dir = MODEL_DIR / model_type
 
@@ -162,7 +174,7 @@ def run_experiment(
 
         with torch.no_grad():
             for batch in test_loader:
-                x, y, _ = batch
+                x, y, _, _ = batch  # x, y, event_flag, abs_delta
                 x = x.to(device)
                 pred = model(x)
                 preds.append(pred.cpu().numpy())
@@ -262,7 +274,7 @@ def save_results(predictions, actuals, metrics, model_type, horizon):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='CA-CEEMDAN-LTSF for EC Prediction')
+    parser = argparse.ArgumentParser(description='CA-CEEMDAN-LTSF for pH Prediction')
     parser.add_argument('--model', '-m', type=str, default='dlinear',
                         choices=['dlinear', 'nlinear'], help='Model type')
     parser.add_argument('--horizon', '-H', type=int, default=None,

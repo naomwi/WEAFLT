@@ -18,7 +18,8 @@ def train_epoch(
     train_loader: DataLoader,
     criterion: nn.Module,
     optimizer: torch.optim.Optimizer,
-    device: torch.device
+    device: torch.device,
+    loss_type: str = 'event_weighted'
 ) -> float:
     """Train for one epoch."""
     model.train()
@@ -26,14 +27,21 @@ def train_epoch(
     n_batches = 0
 
     for batch in train_loader:
-        x, y, event_flag = batch
+        x, y, event_flag, abs_delta = batch
         x = x.to(device)
         y = y.to(device)
         event_flag = event_flag.to(device)
+        abs_delta = abs_delta.to(device)
 
         optimizer.zero_grad()
         pred = model(x)
-        loss = criterion(pred, y, event_flag)
+
+        # Choose which weighting to use based on loss type
+        if loss_type == 'adaptive':
+            loss = criterion(pred, y, abs_delta)
+        else:
+            loss = criterion(pred, y, event_flag)
+
         loss.backward()
         optimizer.step()
 
@@ -47,7 +55,8 @@ def validate(
     model: nn.Module,
     val_loader: DataLoader,
     criterion: nn.Module,
-    device: torch.device
+    device: torch.device,
+    loss_type: str = 'event_weighted'
 ) -> float:
     """Validate model."""
     model.eval()
@@ -56,13 +65,19 @@ def validate(
 
     with torch.no_grad():
         for batch in val_loader:
-            x, y, event_flag = batch
+            x, y, event_flag, abs_delta = batch
             x = x.to(device)
             y = y.to(device)
             event_flag = event_flag.to(device)
+            abs_delta = abs_delta.to(device)
 
             pred = model(x)
-            loss = criterion(pred, y, event_flag)
+
+            # Choose which weighting to use based on loss type
+            if loss_type == 'adaptive':
+                loss = criterion(pred, y, abs_delta)
+            else:
+                loss = criterion(pred, y, event_flag)
 
             total_loss += loss.item()
             n_batches += 1
@@ -81,7 +96,8 @@ def train_model(
     weight_decay: float = 1e-5,
     early_stopping_patience: int = 10,
     verbose: bool = True,
-    save_path: Optional[Path] = None
+    save_path: Optional[Path] = None,
+    loss_type: str = 'event_weighted'
 ) -> Dict:
     """Train model with early stopping."""
     model = model.to(device)
@@ -106,8 +122,8 @@ def train_model(
     start_time = time.time()
 
     for epoch in range(epochs):
-        train_loss = train_epoch(model, train_loader, criterion, optimizer, device)
-        val_loss = validate(model, val_loader, criterion, device)
+        train_loss = train_epoch(model, train_loader, criterion, optimizer, device, loss_type)
+        val_loss = validate(model, val_loader, criterion, device, loss_type)
 
         history['train_loss'].append(train_loss)
         history['val_loss'].append(val_loss)
@@ -164,14 +180,26 @@ def train_all_imf_models(
     """
     from models import DLinear, NLinear
     from utils.data_loader import create_dataloaders
-    from utils.losses import EventWeightedLoss
+    from utils.losses import EventWeightedLoss, AdaptiveWeightedLoss
 
     n_imfs = len(imfs)
     all_models = []
     all_scalers = []
 
-    # Loss function
-    criterion = EventWeightedLoss(event_weight=config.get('event_weight', 3.0))
+    # Determine loss type and create criterion
+    loss_type = config.get('loss_type', 'event_weighted')
+
+    if loss_type == 'adaptive':
+        criterion = AdaptiveWeightedLoss(
+            alpha=config.get('alpha', 1.0),
+            max_weight=config.get('max_weight', 10.0)
+        )
+        if verbose:
+            print(f"Using AdaptiveWeightedLoss (alpha={config.get('alpha', 1.0)})")
+    else:
+        criterion = EventWeightedLoss(event_weight=config.get('event_weight', 4.0))
+        if verbose:
+            print(f"Using EventWeightedLoss (event_weight={config.get('event_weight', 4.0)})")
 
     # Components = IMFs + residue
     components = list(imfs) + [residue]
@@ -207,7 +235,8 @@ def train_all_imf_models(
             weight_decay=config.get('weight_decay', 1e-5),
             early_stopping_patience=config.get('early_stopping_patience', 10),
             verbose=False,
-            save_path=save_path
+            save_path=save_path,
+            loss_type=loss_type
         )
 
         if verbose:
