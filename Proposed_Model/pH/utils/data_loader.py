@@ -54,6 +54,11 @@ class IMFDataset(Dataset):
 
     Input: [IMF_value, Δx, |Δx|, rolling_std, rolling_zscore] (5 features)
     Event flags are provided separately for EventWeightedLoss.
+
+    Important: IMF values are NOT scaled. CEEMDAN preserves the property:
+    original_signal = sum(IMFs) + Residue (exact mathematical)
+
+    Features ARE scaled since they have different ranges.
     """
 
     def __init__(
@@ -64,18 +69,16 @@ class IMFDataset(Dataset):
         seq_len: int,
         pred_len: int,
         flag: str = 'train',
-        scaler: Optional[StandardScaler] = None,
-        feature_scaler: Optional[StandardScaler] = None
+        feature_scaler: Optional[RobustScaler] = None
     ):
         """
         Args:
-            imf: 1D array of IMF values
+            imf: 1D array of IMF values (NOT scaled)
             features: 2D array of change-aware features (from original signal)
             event_flags: 1D array of event flags
             seq_len: Input sequence length
             pred_len: Prediction horizon
             flag: 'train', 'val', or 'test'
-            scaler: Pre-fitted scaler for IMF
             feature_scaler: Pre-fitted scaler for features
         """
         self.seq_len = seq_len
@@ -93,19 +96,13 @@ class IMFDataset(Dataset):
         type_map = {'train': 0, 'val': 1, 'test': 2}
         idx = type_map[flag]
 
-        # Scale IMF values using RobustScaler (preserves outliers better)
-        if scaler is None:
-            self.scaler = RobustScaler()  # Robust to outliers
-            train_imf = imf[:n_train].reshape(-1, 1)
-            self.scaler.fit(train_imf)
-        else:
-            self.scaler = scaler
+        # NO SCALING for IMF - keep original scale
+        # This allows sum(IMF_preds) + Residue_pred = Original_signal_pred
+        imf_unscaled = imf.reshape(-1, 1)
 
-        imf_scaled = self.scaler.transform(imf.reshape(-1, 1))
-
-        # Scale features using RobustScaler
+        # Scale features using RobustScaler (features have different ranges)
         if feature_scaler is None:
-            self.feature_scaler = RobustScaler()  # Robust to outliers
+            self.feature_scaler = RobustScaler()
             train_features = features[:n_train]
             self.feature_scaler.fit(train_features)
         else:
@@ -113,12 +110,12 @@ class IMFDataset(Dataset):
 
         features_scaled = self.feature_scaler.transform(features)
 
-        # Combine IMF with features: [IMF, Δx, |Δx|, rolling_std, rolling_zscore]
-        combined = np.concatenate([imf_scaled, features_scaled], axis=1)
+        # Combine IMF (unscaled) with features (scaled): [IMF, Δx, |Δx|, rolling_std, rolling_zscore]
+        combined = np.concatenate([imf_unscaled, features_scaled], axis=1)
 
         # Get split
         self.data_x = combined[border1s[idx]:border2s[idx]]
-        self.data_y = imf_scaled[border1s[idx]:border2s[idx]]  # Target is just IMF
+        self.data_y = imf_unscaled[border1s[idx]:border2s[idx]]  # Target is unscaled IMF
         self.event_flags = event_flags[border1s[idx]:border2s[idx]]
 
     def __len__(self):
@@ -140,10 +137,6 @@ class IMFDataset(Dataset):
             torch.tensor(seq_event, dtype=torch.float32)
         )
 
-    def inverse_transform(self, data: np.ndarray) -> np.ndarray:
-        """Inverse scale predictions."""
-        return self.scaler.inverse_transform(data.reshape(-1, 1)).flatten()
-
 
 def create_dataloaders(
     imf: np.ndarray,
@@ -152,35 +145,38 @@ def create_dataloaders(
     seq_len: int,
     pred_len: int,
     batch_size: int = 64
-) -> Tuple[DataLoader, DataLoader, DataLoader, StandardScaler, StandardScaler]:
+) -> Tuple[DataLoader, DataLoader, DataLoader, None, RobustScaler]:
     """
     Create train, val, test dataloaders.
 
+    Note: IMF values are NOT scaled. Only features are scaled.
+
     Returns:
-        Tuple of (train_loader, val_loader, test_loader, imf_scaler, feature_scaler)
+        Tuple of (train_loader, val_loader, test_loader, None, feature_scaler)
+        imf_scaler is None because IMFs are not scaled.
     """
-    # Create train dataset first to get scalers
+    # Create train dataset first to get feature scaler
     train_dataset = IMFDataset(
         imf, features, event_flags, seq_len, pred_len, flag='train'
     )
-    imf_scaler = train_dataset.scaler
     feature_scaler = train_dataset.feature_scaler
 
-    # Create val and test with same scalers
+    # Create val and test with same feature scaler
     val_dataset = IMFDataset(
         imf, features, event_flags, seq_len, pred_len,
-        flag='val', scaler=imf_scaler, feature_scaler=feature_scaler
+        flag='val', feature_scaler=feature_scaler
     )
     test_dataset = IMFDataset(
         imf, features, event_flags, seq_len, pred_len,
-        flag='test', scaler=imf_scaler, feature_scaler=feature_scaler
+        flag='test', feature_scaler=feature_scaler
     )
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
-    return train_loader, val_loader, test_loader, imf_scaler, feature_scaler
+    # Return None for imf_scaler (backward compatibility) - IMFs are not scaled
+    return train_loader, val_loader, test_loader, None, feature_scaler
 
 
 if __name__ == "__main__":
@@ -193,13 +189,15 @@ if __name__ == "__main__":
     features = np.random.randn(n, 4)  # 4 change-aware features
     event_flags = (np.random.rand(n) > 0.95).astype(np.float32)
 
-    train_loader, val_loader, test_loader, scaler, feat_scaler = create_dataloaders(
+    train_loader, val_loader, test_loader, imf_scaler, feat_scaler = create_dataloaders(
         imf, features, event_flags, seq_len=168, pred_len=24, batch_size=32
     )
 
     print(f"Train batches: {len(train_loader)}")
     print(f"Val batches: {len(val_loader)}")
     print(f"Test batches: {len(test_loader)}")
+    print(f"IMF scaler: {imf_scaler}")  # Should be None
+    print(f"Feature scaler: {feat_scaler}")
 
     # Check batch
     x, y, e = next(iter(train_loader))

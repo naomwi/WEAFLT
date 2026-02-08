@@ -66,8 +66,15 @@ def train_model(model, train_loader, val_loader, device, epochs=50, lr=0.001, le
 
 
 def train_single_imf(idx, comp, model_type, seq_len, horizon, device, train_config, print_lock=None, verbose=True):
-    """Train a single IMF model (for parallel execution)."""
-    train_ld, val_ld, test_ld, scaler = create_dataloaders(comp, seq_len, horizon)
+    """
+    Train a single IMF model.
+
+    Note: No scaling is applied to IMFs. CEEMD preserves the mathematical property:
+    original_signal = sum(IMFs) + Residue
+
+    Predictions can be summed directly without inverse_transform.
+    """
+    train_ld, val_ld, test_ld, _ = create_dataloaders(comp, seq_len, horizon)
 
     if model_type == 'dlinear':
         model = DLinear(seq_len, horizon)
@@ -84,8 +91,9 @@ def train_single_imf(idx, comp, model_type, seq_len, horizon, device, train_conf
             preds.append(model(x.to(device)).cpu().numpy())
             actuals.append(y.numpy())
 
-    preds = scaler.inverse_transform(np.concatenate(preds).reshape(-1, 1)).flatten()
-    actuals = scaler.inverse_transform(np.concatenate(actuals).reshape(-1, 1)).flatten()
+    # NO inverse_transform - predictions are already in original IMF scale
+    preds = np.concatenate(preds).flatten()
+    actuals = np.concatenate(actuals).flatten()
 
     n_samples = len(preds) // horizon
     preds_reshaped = preds.reshape(n_samples, horizon)

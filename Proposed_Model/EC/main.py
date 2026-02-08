@@ -151,8 +151,8 @@ def run_experiment(
 
     components = list(imfs) + [residue]
 
-    for i, (component, model, (imf_scaler, feat_scaler)) in enumerate(zip(components, models, scalers)):
-        # Create test loader
+    for i, (component, model, (_, feat_scaler)) in enumerate(zip(components, models, scalers)):
+        # Create test loader (imf_scaler is None - IMFs are not scaled)
         _, _, test_loader, _, _ = create_dataloaders(
             component, features, event_flags,
             seq_len=seq_len, pred_len=horizon,
@@ -175,17 +175,14 @@ def run_experiment(
         preds = np.concatenate(preds, axis=0)
         actuals = np.concatenate(actuals, axis=0)
 
-        # Inverse transform
-        preds_inv = imf_scaler.inverse_transform(preds.reshape(-1, 1)).flatten()
-        actuals_inv = imf_scaler.inverse_transform(actuals.reshape(-1, 1)).flatten()
+        # NO inverse_transform - predictions are already in original IMF scale
+        # CEEMDAN preserves: sum(IMFs) + Residue = Original signal
+        n_samples = preds.shape[0]
+        preds_reshaped = preds.reshape(n_samples, horizon)
+        actuals_reshaped = actuals.reshape(n_samples, horizon)
 
-        # Reshape back
-        n_samples = len(preds)
-        preds_inv = preds_inv.reshape(n_samples, horizon)
-        actuals_inv = actuals_inv.reshape(n_samples, horizon)
-
-        all_preds.append(preds_inv)
-        all_actuals.append(actuals_inv)
+        all_preds.append(preds_reshaped)
+        all_actuals.append(actuals_reshaped)
 
     # =========================================================================
     # Step 6: Aggregate and compute final metrics

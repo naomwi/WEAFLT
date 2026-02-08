@@ -81,6 +81,10 @@ class TimeSeriesDataset(Dataset):
 
 
 def create_dataloaders(data, seq_len, pred_len, batch_size=64):
+    """
+    Create dataloaders for end-to-end models (PatchTST, Transformer).
+    Uses StandardScaler for raw signal normalization.
+    """
     train_ds = TimeSeriesDataset(data, seq_len, pred_len, 'train')
     val_ds = TimeSeriesDataset(data, seq_len, pred_len, 'val', train_ds.scaler)
     test_ds = TimeSeriesDataset(data, seq_len, pred_len, 'test', train_ds.scaler)
@@ -90,4 +94,59 @@ def create_dataloaders(data, seq_len, pred_len, batch_size=64):
         DataLoader(val_ds, batch_size=batch_size, shuffle=False),
         DataLoader(test_ds, batch_size=batch_size, shuffle=False),
         train_ds.scaler
+    )
+
+
+class IMFDataset(Dataset):
+    """
+    Dataset for IMF forecasting - NO SCALING.
+
+    CEEMDAN preserves the mathematical property:
+    original_signal = sum(IMFs) + Residue (exact)
+
+    Therefore, IMFs are NOT scaled, allowing direct summation of predictions.
+    """
+
+    def __init__(self, imf, seq_len, pred_len, flag='train'):
+        self.seq_len = seq_len
+        self.pred_len = pred_len
+
+        n = len(imf)
+        n_train = int(n * 0.6)
+        n_val = int(n * 0.2)
+
+        border1s = [0, n_train - seq_len, n_train + n_val - seq_len]
+        border2s = [n_train, n_train + n_val, n]
+
+        idx = {'train': 0, 'val': 1, 'test': 2}[flag]
+
+        # NO SCALING - keep original IMF scale
+        self.data = imf[border1s[idx]:border2s[idx]].reshape(-1, 1)
+
+    def __len__(self):
+        return len(self.data) - self.seq_len - self.pred_len + 1
+
+    def __getitem__(self, index):
+        s_end = index + self.seq_len
+        r_end = s_end + self.pred_len
+        return (
+            torch.tensor(self.data[index:s_end], dtype=torch.float32),
+            torch.tensor(self.data[s_end:r_end], dtype=torch.float32)
+        )
+
+
+def create_imf_dataloaders(imf, seq_len, pred_len, batch_size=64):
+    """
+    Create dataloaders for IMF models (LSTM with CEEMDAN).
+    NO scaling applied - IMFs keep their original scale.
+    """
+    train_ds = IMFDataset(imf, seq_len, pred_len, 'train')
+    val_ds = IMFDataset(imf, seq_len, pred_len, 'val')
+    test_ds = IMFDataset(imf, seq_len, pred_len, 'test')
+
+    return (
+        DataLoader(train_ds, batch_size=batch_size, shuffle=True),
+        DataLoader(val_ds, batch_size=batch_size, shuffle=False),
+        DataLoader(test_ds, batch_size=batch_size, shuffle=False),
+        None  # No scaler - IMFs are not scaled
     )

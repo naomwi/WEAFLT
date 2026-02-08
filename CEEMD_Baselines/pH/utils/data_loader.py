@@ -41,9 +41,17 @@ def load_raw_data(data_path: str, target_col: str, site_no: int = 1463500):
 
 
 class IMFDataset(Dataset):
-    """Standard IMF dataset - 1 feature only."""
+    """
+    Standard IMF dataset - NO SCALING.
 
-    def __init__(self, imf, seq_len, pred_len, flag='train', scaler=None):
+    Important: CEEMDAN/CEEMD decomposition preserves scale:
+    original_signal = sum(IMFs) + Residue (exact mathematical property)
+
+    Therefore, we do NOT scale IMFs. Predictions can be summed directly
+    to reconstruct the original signal prediction.
+    """
+
+    def __init__(self, imf, seq_len, pred_len, flag='train'):
         self.seq_len = seq_len
         self.pred_len = pred_len
 
@@ -56,14 +64,9 @@ class IMFDataset(Dataset):
 
         idx = {'train': 0, 'val': 1, 'test': 2}[flag]
 
-        if scaler is None:
-            self.scaler = StandardScaler()
-            self.scaler.fit(imf[:n_train].reshape(-1, 1))
-        else:
-            self.scaler = scaler
-
-        imf_scaled = self.scaler.transform(imf.reshape(-1, 1))
-        self.data = imf_scaled[border1s[idx]:border2s[idx]]
+        # NO SCALING - keep original IMF scale
+        # This allows sum(IMF_preds) + Residue_pred = Original_signal_pred
+        self.data = imf[border1s[idx]:border2s[idx]].reshape(-1, 1)
 
     def __len__(self):
         return len(self.data) - self.seq_len - self.pred_len + 1
@@ -76,18 +79,20 @@ class IMFDataset(Dataset):
             torch.tensor(self.data[s_end:r_end], dtype=torch.float32)
         )
 
-    def inverse_transform(self, data):
-        return self.scaler.inverse_transform(data.reshape(-1, 1)).flatten()
-
 
 def create_dataloaders(imf, seq_len, pred_len, batch_size=64):
+    """
+    Create train/val/test dataloaders for a single IMF.
+
+    Note: No scaling is applied. Returns None for scaler (backward compatibility).
+    """
     train_ds = IMFDataset(imf, seq_len, pred_len, 'train')
-    val_ds = IMFDataset(imf, seq_len, pred_len, 'val', train_ds.scaler)
-    test_ds = IMFDataset(imf, seq_len, pred_len, 'test', train_ds.scaler)
+    val_ds = IMFDataset(imf, seq_len, pred_len, 'val')
+    test_ds = IMFDataset(imf, seq_len, pred_len, 'test')
 
     return (
         DataLoader(train_ds, batch_size=batch_size, shuffle=True),
         DataLoader(val_ds, batch_size=batch_size, shuffle=False),
         DataLoader(test_ds, batch_size=batch_size, shuffle=False),
-        train_ds.scaler
+        None  # No scaler - IMFs are not scaled
     )

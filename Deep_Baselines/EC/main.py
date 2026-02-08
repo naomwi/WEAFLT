@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from config import DATA_DIR, DATA_CONFIG, MODEL_CONFIG, TRAIN_CONFIG, HORIZONS, RESULTS_DIR
 from models import LSTMModel, TransformerModel, PatchTST
-from utils import create_dataloaders, calculate_all_metrics, print_metrics, load_raw_data, plot_prediction
+from utils import create_dataloaders, create_imf_dataloaders, calculate_all_metrics, print_metrics, load_raw_data, plot_prediction
 
 # For LSTM with CEEMDAN
 PROJECT_DIR = Path(__file__).parent.parent.parent
@@ -104,12 +104,15 @@ def run_lstm_ceemdan(horizon, data, device, verbose=True):
         print(f"  CEEMDAN: {len(imfs)} IMFs + residue")
 
     # Train per-IMF LSTM models
+    # Note: IMFs are NOT scaled. CEEMDAN preserves:
+    # original_signal = sum(IMFs) + Residue (exact mathematical property)
     components = list(imfs) + [residue]
     all_preds, all_actuals = [], []
 
     start = time.time()
     for i, comp in enumerate(components):
-        train_ld, val_ld, test_ld, scaler = create_dataloaders(comp, seq_len, horizon)
+        # Use IMF-specific dataloaders (no scaling)
+        train_ld, val_ld, test_ld, _ = create_imf_dataloaders(comp, seq_len, horizon)
 
         model = LSTMModel(seq_len, horizon, **config)
         model, _ = train_model(model, train_ld, val_ld, device, **TRAIN_CONFIG)
@@ -122,8 +125,9 @@ def run_lstm_ceemdan(horizon, data, device, verbose=True):
                 preds.append(model(x.to(device)).cpu().numpy())
                 actuals.append(y.numpy())
 
-        preds = scaler.inverse_transform(np.concatenate(preds).reshape(-1, 1)).flatten()
-        actuals = scaler.inverse_transform(np.concatenate(actuals).reshape(-1, 1)).flatten()
+        # NO inverse_transform - predictions are already in original IMF scale
+        preds = np.concatenate(preds).flatten()
+        actuals = np.concatenate(actuals).flatten()
 
         n_samples = len(preds) // horizon
         all_preds.append(preds.reshape(n_samples, horizon))
@@ -135,7 +139,7 @@ def run_lstm_ceemdan(horizon, data, device, verbose=True):
     if verbose:
         print(f"  Training done in {time.time()-start:.1f}s")
 
-    # Sum all components
+    # Sum all components - this now correctly reconstructs the original signal prediction
     final_pred = np.array(all_preds).sum(axis=0)[:, -1]
     final_actual = np.array(all_actuals).sum(axis=0)[:, -1]
 
